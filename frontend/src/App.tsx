@@ -3,8 +3,8 @@ import { sileo } from 'sileo'
 import { RetellWebClient } from 'retell-client-js-sdk'
 import {
   getStats, getClients, getClient, getDrivers, getSegmentos, postAction,
-  getSettings, postSettings, postAssistant, fetchTTS, postWebCall, postRetentionLog,
-  type Stats, type ClientRow, type ClientDetail, type Driver, type Segmentos, type SettingsState,
+  getSettings, postSettings, postAssistant, fetchTTS, postWebCall, getCallResult, getCalls,
+  type Stats, type ClientRow, type ClientDetail, type Driver, type Segmentos, type SettingsState, type CallLog,
 } from './api'
 
 function useTheme() {
@@ -54,14 +54,22 @@ function DashboardView() {
   const startCall = async (id: string) => {
     setCallState('connecting')
     try {
-      const { access_token } = await postWebCall(id)
+      const { access_token, call_id } = await postWebCall(id)
       const client = new RetellWebClient()
       webClient.current = client
       client.on('call_started', () => setCallState('live'))
-      client.on('call_ended', () => { setCallState('idle'); sileo.success({ title: 'Llamada finalizada' }) })
+      client.on('call_ended', () => {
+        setCallState('idle')
+        sileo.success({ title: 'Llamada finalizada', description: 'Analizando la conversación…' })
+        setTimeout(() => {
+          getCallResult(call_id).then(res => {
+            if (res.ready && res.summary)
+              sileo.success({ title: `Resultado · ${res.sentiment || 'registrado'}`, description: res.summary.slice(0, 130) })
+          }).catch(() => {})
+        }, 6000)
+      })
       client.on('error', () => { setCallState('idle'); sileo.error({ title: 'Error en la llamada' }) })
       await client.startCall({ accessToken: access_token })
-      postRetentionLog(id).catch(() => {})
     } catch {
       setCallState('idle')
       sileo.error({ title: 'No se pudo iniciar la llamada', description: 'Revisa la key de Retell en Ajustes' })
@@ -258,6 +266,36 @@ function SettingsView() {
   )
 }
 
+function CallsView() {
+  const [calls, setCalls] = useState<CallLog[]>([])
+  useEffect(() => { getCalls().then(d => setCalls(d.calls)).catch(() => {}) }, [])
+  return (
+    <main className="container">
+      <section className="section">
+        <div className="section-label">Historial de llamadas de retención</div>
+        {calls.length === 0 ? (
+          <p className="mono" style={{ color: 'var(--fg-faint)', fontSize: 13, lineHeight: 1.7 }}>
+            Aún no hay llamadas registradas.<br />Haz una desde la ficha de un cliente (Radar) y aquí verás el resumen y el sentimiento de la conversación.
+          </p>
+        ) : (
+          <div className="calls">
+            {calls.map((c, i) => (
+              <div className="call-row" key={i}>
+                <div>
+                  <div className="tienda-name">{c.tienda || c.customer_id.slice(0, 10)}</div>
+                  <div className="call-when">{c.dueno} · {c.created_at.slice(0, 16)}</div>
+                </div>
+                <div className="call-summary">{c.guion || '—'}</div>
+                <div className={`sent ${c.resultado}`}>{c.resultado}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+    </main>
+  )
+}
+
 const SUGERENCIAS = [
   '¿Quiénes son mis 10 clientes más en riesgo?',
   '¿Por qué se van las tienditas Mini?',
@@ -364,10 +402,11 @@ function Icon({ name }: { name: string }) {
   )
 }
 
-type View = 'dashboard' | 'agent' | 'settings'
+type View = 'dashboard' | 'agent' | 'calls' | 'settings'
 const MODULES: { id: View; label: string; icon: string }[] = [
   { id: 'dashboard', label: 'Radar', icon: 'target' },
   { id: 'agent', label: 'Agente', icon: 'bot' },
+  { id: 'calls', label: 'Llamadas', icon: 'phone' },
   { id: 'settings', label: 'Ajustes', icon: 'sliders' },
 ]
 
@@ -400,7 +439,7 @@ export default function App() {
       </aside>
 
       <div className="content">
-        {view === 'dashboard' ? <DashboardView /> : view === 'agent' ? <AgentView /> : <SettingsView />}
+        {view === 'dashboard' ? <DashboardView /> : view === 'agent' ? <AgentView /> : view === 'calls' ? <CallsView /> : <SettingsView />}
       </div>
     </div>
   )

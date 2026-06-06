@@ -397,3 +397,47 @@ def retention_log(a: WebCallReq):
                        values (%s, %s)""", [a.customer_id, "llamada web iniciada"])
         c.commit()
     return {"ok": True}
+
+
+@app.get("/retention/result/{call_id}")
+def retention_result(call_id: str):
+    """Loop de feedback: trae el resultado de la llamada desde Retell y lo guarda en Supabase."""
+    key = get_setting("retell_api_key")
+    if not key:
+        raise HTTPException(400, "Falta la API key de Retell")
+    r = subprocess.run(["curl", "-s", f"https://api.retellai.com/v2/get-call/{call_id}",
+                        "-H", f"Authorization: Bearer {key}"], capture_output=True, text=True, timeout=20)
+    try:
+        data = json.loads(r.stdout)
+    except Exception:
+        raise HTTPException(502, "Retell no respondió")
+    an = data.get("call_analysis") or {}
+    summary = an.get("call_summary", "")
+    sentiment = an.get("user_sentiment", "")
+    transcript = data.get("transcript", "")
+    status = data.get("call_status", "")
+    dur = int((data.get("duration_ms") or 0) / 1000)
+    cid = (data.get("metadata") or {}).get("customer_id", "")
+    ready = bool(summary) or status == "ended"
+    if ready and (summary or transcript):
+        with db() as c, c.cursor() as cur:
+            cur.execute("""insert into call_logs (customer_id, guion, resultado, duracion_seg, transcripcion)
+                           values (%s,%s,%s,%s,%s)""",
+                        [cid, summary, sentiment or status, dur, transcript])
+            c.commit()
+    return {"ready": ready, "summary": summary, "sentiment": sentiment,
+            "status": status, "duration_s": dur, "transcript": transcript[:2000]}
+
+
+@app.get("/retention/calls")
+def retention_calls(limit: int = 20):
+    with db() as c, c.cursor() as cur:
+        cur.execute("""select customer_id, guion, resultado, duracion_seg, created_at
+                       from call_logs order by created_at desc limit %s""", [limit])
+        cols = [d[0] for d in cur.description]
+        rows = [dict(zip(cols, r)) for r in cur.fetchall()]
+    for row in rows:
+        if row.get("customer_id"):
+            row["tienda"], row["dueno"], _ = humanize(row["customer_id"])
+        row["created_at"] = str(row["created_at"])
+    return {"calls": rows}

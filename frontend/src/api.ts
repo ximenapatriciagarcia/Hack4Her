@@ -74,6 +74,15 @@ export const postRetentionLog = (customer_id: string) =>
     body: JSON.stringify({ customer_id }),
   })
 
+export const getCallResult = (callId: string) =>
+  j<{ ready: boolean; summary: string; sentiment: string; status: string; duration_s: number; transcript: string }>(`/retention/result/${callId}`)
+
+export type CallLog = {
+  customer_id: string; tienda?: string; dueno?: string
+  guion: string; resultado: string; duracion_seg: number; created_at: string
+}
+export const getCalls = () => j<{ calls: CallLog[] }>('/retention/calls')
+
 export type SettingsState = Record<string, { set: boolean; masked: string }>
 export const getSettings = () => j<SettingsState>('/settings')
 export const postSettings = (s: Record<string, string>) =>

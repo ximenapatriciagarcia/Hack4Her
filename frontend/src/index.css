@@ -166,6 +166,16 @@ button { font-family: inherit; cursor: pointer; border: none; background: none; 
 .btn-call .live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); animation: pulse 1.2s ease-in-out infinite; }
 @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .3 } }
 
+/* ============ HISTORIAL DE LLAMADAS ============ */
+.calls { display: flex; flex-direction: column; }
+.call-row { display: grid; grid-template-columns: 200px 1fr 120px; gap: 18px; align-items: center; padding: 16px 0; border-bottom: 1px solid var(--border); }
+.call-row .call-summary { font-size: 14px; color: var(--fg-muted); line-height: 1.5; }
+.call-when { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--fg-faint); }
+.sent { font-family: 'JetBrains Mono', monospace; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; text-align: right; }
+.sent.Positive { color: var(--fg); }
+.sent.Negative { color: var(--accent); }
+.sent.Neutral, .sent.Unknown { color: var(--fg-faint); }
+
 /* ============ CHAT (agente) ============ */
 .chat { max-width: 760px; display: flex; flex-direction: column; height: calc(100dvh - 210px); min-height: 420px; }
 .chat-log { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 20px; padding: 4px 2px 20px; }
