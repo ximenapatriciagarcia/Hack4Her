@@ -12,6 +12,7 @@
   "dependencies": {
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
+    "retell-client-js-sdk": "^2.0.8",
     "sileo": "^0.1.5"
   },
   "devDependencies": {

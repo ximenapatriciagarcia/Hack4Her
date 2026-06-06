@@ -152,6 +152,12 @@ button { font-family: inherit; cursor: pointer; border: none; background: none; 
 .attr .v { font-size: 14px; margin-top: 5px; }
 .btn-primary { width: 100%; background: var(--invert); color: var(--on-invert); padding: 15px; font-weight: 600; font-size: 14px; transition: opacity .2s; margin-top: 12px; }
 .btn-primary:hover { opacity: .82; }
+.btn-call { width: 100%; background: transparent; color: var(--fg); border: 1px solid var(--border-strong); padding: 14px; font-weight: 600; font-size: 14px; margin-top: 10px; transition: all .2s; display: flex; align-items: center; justify-content: center; gap: 9px; }
+.btn-call:hover { border-color: var(--fg); }
+.btn-call:disabled { opacity: .5; cursor: default; }
+.btn-call.live { border-color: var(--accent); color: var(--accent); }
+.btn-call .live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); animation: pulse 1.2s ease-in-out infinite; }
+@keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .3 } }
 
 /* ============ CHAT (agente) ============ */
 .chat { max-width: 760px; display: flex; flex-direction: column; height: calc(100dvh - 210px); min-height: 420px; }

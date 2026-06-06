@@ -327,3 +327,54 @@ def tts(a: Ask):
     if os.path.exists(out) and os.path.getsize(out) > 1000:
         return Response(content=open(out, "rb").read(), media_type="audio/mpeg")
     raise HTTPException(502, "ElevenLabs no devolvió audio (revisa la API key)")
+
+
+# ---------------- RETENCIÓN (Retell — llamada web) ----------------
+class WebCallReq(BaseModel):
+    customer_id: str
+
+
+@app.post("/retention/webcall")
+def retention_webcall(a: WebCallReq):
+    key = get_setting("retell_api_key")
+    agent_id = get_setting("retell_agent_id")
+    if not key or not agent_id:
+        raise HTTPException(400, "Falta la API key de Retell o el agente (revisa Ajustes / setup)")
+    with db() as c, c.cursor() as cur:
+        cur.execute("""select territory_d, rtm_customer_size_d, churn_proba
+                       from v_clientes_riesgo where customer_id=%s""", [a.customer_id])
+        row = cur.fetchone()
+    terr, tam, proba = row if row else ("desconocido", "desconocido", 0)
+    body = {
+        "agent_id": agent_id,
+        "retell_llm_dynamic_variables": {
+            "territorio": str(terr), "tamano": str(tam),
+            "probabilidad": str(round(float(proba) * 100)) if proba else "alto",
+        },
+        "metadata": {"customer_id": a.customer_id},
+    }
+    pf = "/tmp/_webcall.json"
+    with open(pf, "w", encoding="utf-8") as f:
+        json.dump(body, f, ensure_ascii=False)
+    r = subprocess.run(
+        ["curl", "-s", "-X", "POST", "https://api.retellai.com/v2/create-web-call",
+         "-H", f"Authorization: Bearer {key}", "-H", "Content-Type: application/json",
+         "--data", "@" + pf], capture_output=True, text=True, timeout=30)
+    try:
+        data = json.loads(r.stdout)
+    except Exception:
+        raise HTTPException(502, "Retell no respondió")
+    if "access_token" not in data:
+        raise HTTPException(502, f"Retell: {data.get('message', 'sin access_token')}")
+    return {"access_token": data["access_token"], "call_id": data.get("call_id"),
+            "agent_id": agent_id}
+
+
+# Registrar la acción de llamada en el log
+@app.post("/retention/log")
+def retention_log(a: WebCallReq):
+    with db() as c, c.cursor() as cur:
+        cur.execute("""insert into call_logs (customer_id, resultado)
+                       values (%s, %s)""", [a.customer_id, "llamada web iniciada"])
+        c.commit()
+    return {"ok": True}

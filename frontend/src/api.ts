@@ -59,6 +59,20 @@ export async function fetchTTS(message: string): Promise<string> {
   return URL.createObjectURL(await r.blob())
 }
 
+export const postWebCall = (customer_id: string) =>
+  j<{ access_token: string; call_id: string }>('/retention/webcall', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ customer_id }),
+  })
+
+export const postRetentionLog = (customer_id: string) =>
+  j<{ ok: boolean }>('/retention/log', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ customer_id }),
+  })
+
 export type SettingsState = Record<string, { set: boolean; masked: string }>
 export const getSettings = () => j<SettingsState>('/settings')
 export const postSettings = (s: Record<string, string>) =>

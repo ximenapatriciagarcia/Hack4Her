@@ -1,8 +1,9 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { sileo } from 'sileo'
+import { RetellWebClient } from 'retell-client-js-sdk'
 import {
   getStats, getClients, getClient, getDrivers, getSegmentos, postAction,
-  getSettings, postSettings, postAssistant, fetchTTS,
+  getSettings, postSettings, postAssistant, fetchTTS, postWebCall, postRetentionLog,
   type Stats, type ClientRow, type ClientDetail, type Driver, type Segmentos, type SettingsState,
 } from './api'
 
@@ -47,6 +48,26 @@ function DashboardView() {
   const [seg, setSeg] = useState<Segmentos | null>(null)
   const [sel, setSel] = useState<ClientDetail | null>(null)
   const [loadingSel, setLoadingSel] = useState(false)
+  const [callState, setCallState] = useState<'idle' | 'connecting' | 'live'>('idle')
+  const webClient = useRef<RetellWebClient | null>(null)
+
+  const startCall = async (id: string) => {
+    setCallState('connecting')
+    try {
+      const { access_token } = await postWebCall(id)
+      const client = new RetellWebClient()
+      webClient.current = client
+      client.on('call_started', () => setCallState('live'))
+      client.on('call_ended', () => { setCallState('idle'); sileo.success({ title: 'Llamada finalizada' }) })
+      client.on('error', () => { setCallState('idle'); sileo.error({ title: 'Error en la llamada' }) })
+      await client.startCall({ accessToken: access_token })
+      postRetentionLog(id).catch(() => {})
+    } catch {
+      setCallState('idle')
+      sileo.error({ title: 'No se pudo iniciar la llamada', description: 'Revisa la key de Retell en Ajustes' })
+    }
+  }
+  const hangup = () => { webClient.current?.stopCall(); setCallState('idle') }
 
   useEffect(() => {
     getStats().then(setStats).catch(() => {})
@@ -163,6 +184,17 @@ function DashboardView() {
                 <button className="btn-primary" onClick={() => registrarAccion(sel.info.customer_id)}>
                   Registrar acción de retención
                 </button>
+                {callState === 'idle' ? (
+                  <button className="btn-call" onClick={() => startCall(sel.info.customer_id)}>
+                    Llamada de retención con IA
+                  </button>
+                ) : callState === 'connecting' ? (
+                  <button className="btn-call" disabled>Conectando…</button>
+                ) : (
+                  <button className="btn-call live" onClick={hangup}>
+                    <span className="live-dot" /> En llamada — Colgar
+                  </button>
+                )}
               </>
             )}
           </aside>
