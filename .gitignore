@@ -1,0 +1,20 @@
+# Entorno
+.venv/
+__pycache__/
+*.pyc
+node_modules/
+dist/
+
+# Secretos
+.env
+*.env.local
+backend/settings.json
+
+# Datos pesados (no a git)
+data/
+*.parquet
+outputs/submission_*.csv
+*.zip
+
+# Sistema
+.DS_Store
