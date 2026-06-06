@@ -217,6 +217,10 @@ function DashboardView() {
 }
 
 const FIELDS = [
+  { k: 'supabase_url', label: 'Supabase URL', hint: 'Project URL — https://xxxxx.supabase.co' },
+  { k: 'supabase_anon_key', label: 'Supabase anon key', hint: 'Clave publishable (lectura del frontend)' },
+  { k: 'supabase_service_key', label: 'Supabase service_role', hint: 'Clave secreta (acceso del backend)' },
+  { k: 'supabase_db_url', label: 'Supabase Connection String', hint: 'postgresql://postgres:…@db…supabase.co:5432/postgres' },
   { k: 'gemini_api_key', label: 'Gemini API Key', hint: 'Google AI Studio — motor del agente IA' },
   { k: 'elevenlabs_api_key', label: 'ElevenLabs API Key', hint: 'Voz del agente y de las llamadas' },
   { k: 'retell_api_key', label: 'Retell API Key', hint: 'Llamadas automáticas de retención' },

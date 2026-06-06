@@ -29,7 +29,7 @@ def _load_env():
 
 
 _load_env()
-DB_URL = os.environ["SUPABASE_DB_URL"]
+DB_URL = os.environ.get("SUPABASE_DB_URL", "")
 
 IMPORTANCE = pd.read_csv(os.path.join(OUT, "feature_importance_v2.csv"))
 IMPORTANCE.columns = ["feature", "importance"]
@@ -58,11 +58,16 @@ def humanize(cid: str):
     return TIENDAS[h % len(TIENDAS)], DUENOS[(h // 13) % len(DUENOS)], f"55 {10000000 + (h % 89999999)}"
 
 # ---------------- SETTINGS (API keys) ----------------
-SETTINGS_KEYS = ["gemini_api_key", "elevenlabs_api_key", "retell_api_key", "elevenlabs_voice_id"]
+SETTINGS_KEYS = ["supabase_url", "supabase_anon_key", "supabase_service_key", "supabase_db_url",
+                 "gemini_api_key", "elevenlabs_api_key", "retell_api_key", "elevenlabs_voice_id"]
 
 
 def load_settings() -> dict:
     base = {
+        "supabase_url": os.environ.get("SUPABASE_URL", ""),
+        "supabase_anon_key": os.environ.get("SUPABASE_PUBLISHABLE_KEY", ""),
+        "supabase_service_key": os.environ.get("SUPABASE_SECRET_KEY", ""),
+        "supabase_db_url": os.environ.get("SUPABASE_DB_URL", ""),
         "gemini_api_key": os.environ.get("GEMINI_API_KEY", ""),
         "elevenlabs_api_key": os.environ.get("ELEVENLABS_API_KEY", ""),
         "retell_api_key": os.environ.get("RETELL_API_KEY", ""),
@@ -97,7 +102,7 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 
 
 def db():
-    return psycopg.connect(DB_URL, connect_timeout=20)
+    return psycopg.connect(get_setting("supabase_db_url") or DB_URL, connect_timeout=20)
 
 
 @app.get("/health")
@@ -217,6 +222,10 @@ def get_settings():
 
 
 class SettingsIn(BaseModel):
+    supabase_url: str = ""
+    supabase_anon_key: str = ""
+    supabase_service_key: str = ""
+    supabase_db_url: str = ""
     gemini_api_key: str = ""
     elevenlabs_api_key: str = ""
     retell_api_key: str = ""
