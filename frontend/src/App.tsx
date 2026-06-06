@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { sileo } from 'sileo'
 import {
   getStats, getClients, getClient, getDrivers, getSegmentos, postAction,
@@ -234,6 +234,8 @@ function AgentView() {
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
   const [speaking, setSpeaking] = useState<number | null>(null)
+  const endRef = useRef<HTMLDivElement>(null)
+  useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [log, busy])
 
   const speak = async (i: number, text: string) => {
     if (speaking !== null) return
@@ -296,6 +298,7 @@ function AgentView() {
               <div className="msg bot"><div className="who">Centinela</div>
                 <span className="mono" style={{ color: 'var(--fg-faint)' }}>pensando…</span></div>
             )}
+            <div ref={endRef} />
           </div>
           <div className="chat-input">
             <input
