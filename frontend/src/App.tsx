@@ -125,7 +125,7 @@ function DashboardView() {
             <tbody>
               {rows.map(c => (
                 <tr key={c.customer_id} onClick={() => openClient(c.customer_id)}>
-                  <td className="cust-id">{c.customer_id.slice(0, 10)}…</td>
+                  <td><div className="tienda-name">{c.tienda}</div><div className="cust-id">{c.customer_id.slice(0, 8)}…</div></td>
                   <td>{c.territory_d}</td>
                   <td>{c.comercial_subchannel_d}</td>
                   <td>{c.rtm_customer_size_d}</td>
@@ -168,6 +168,10 @@ function DashboardView() {
             {loadingSel && <p className="mono" style={{ color: 'var(--fg-muted)' }}>Cargando…</p>}
             {sel && (
               <>
+                <div className="ficha-head">
+                  <div className="ficha-tienda">{sel.info.tienda}</div>
+                  <div className="ficha-contacto mono">{sel.info.dueno} · {sel.info.telefono}</div>
+                </div>
                 <h2>Probabilidad de fuga</h2>
                 <div className="big accent">{(sel.info.churn_proba * 100).toFixed(1)}%</div>
                 <RiskBadge r={sel.info.riesgo} />
@@ -175,7 +179,7 @@ function DashboardView() {
                   <div className="attr"><div className="k">Territorio</div><div className="v">{sel.info.territory_d}</div></div>
                   <div className="attr"><div className="k">Canal</div><div className="v">{sel.info.comercial_subchannel_d}</div></div>
                   <div className="attr"><div className="k">Tamaño</div><div className="v">{sel.info.rtm_customer_size_d}</div></div>
-                  <div className="attr"><div className="k">ID cliente</div><div className="v cust-id">{sel.info.customer_id.slice(0, 12)}…</div></div>
+                  <div className="attr"><div className="k">Dueño</div><div className="v">{sel.info.dueno}</div></div>
                 </div>
                 <h2>Trayectoria · cajas vendidas / mes</h2>
                 <div style={{ color: 'var(--fg)', margin: '14px 0 30px' }}>
@@ -375,8 +379,11 @@ export default function App() {
     <div className="app">
       <aside className="sidebar">
         <div className="brand">
-          <h1>Centinela</h1>
-          <span className="tag">Arca · Retención</span>
+          <img src="/arca-logo.png" className="brand-logo" alt="Arca Continental" />
+          <div className="brand-text">
+            <h1>Centinela</h1>
+            <span className="tag">Arca Continental · Retención</span>
+          </div>
         </div>
         <nav className="side-nav">
           {MODULES.map(m => (

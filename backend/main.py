@@ -6,6 +6,7 @@ desde Parquet (filtro pushdown, sin cargar 5M filas en memoria).
 import os
 import json
 import re
+import hashlib
 import subprocess
 import pandas as pd
 import psycopg
@@ -42,6 +43,19 @@ DRIVER_LABELS = {
     "tenure": "Antigüedad como cliente", "zeros_l6": "Meses sin pedir (últimos 6)",
     "num_doors": "Puertas de enfriador", "num_coolers": "Número de enfriadores",
 }
+
+# Humanización: nombre de tiendita / dueño / teléfono mock (determinístico por customer_id)
+TIENDAS = ["Abarrotes Don Pepe", "Tienda La Esquina", "Mini Súper La Guadalupana", "Abarrotes Lupita",
+           "El Surtidor", "La Económica", "Tienda Mi Ranchito", "Abarrotes El Ahorro", "La Pasadita",
+           "Tiendita Doña Mary", "Súper Las Palmas", "Abarrotes San Juan", "La Michoacana", "El Trébol",
+           "Tienda La Bendición", "Abarrotes 3 Hermanos", "La Central", "Mini Súper El Águila"]
+DUENOS = ["Don Pepe", "Doña Lupita", "Don Chuy", "María", "Don Beto", "Doña Carmen", "Don Rafa",
+          "Lucía", "Don Toño", "Doña Rosa", "Don Memo", "Sra. Juana"]
+
+
+def humanize(cid: str):
+    h = int(hashlib.md5(cid.encode()).hexdigest()[:8], 16)
+    return TIENDAS[h % len(TIENDAS)], DUENOS[(h // 13) % len(DUENOS)], f"55 {10000000 + (h % 89999999)}"
 
 # ---------------- SETTINGS (API keys) ----------------
 SETTINGS_KEYS = ["gemini_api_key", "elevenlabs_api_key", "retell_api_key", "elevenlabs_voice_id"]
@@ -129,6 +143,8 @@ def clients(riesgo: str | None = None, territorio: str | None = None,
         cur.execute(sql, params + [limit, offset])
         cols = [d[0] for d in cur.description]
         rows = [dict(zip(cols, r)) for r in cur.fetchall()]
+    for row in rows:
+        row["tienda"], row["dueno"], row["telefono"] = humanize(row["customer_id"])
     return {"clients": rows, "limit": limit, "offset": offset}
 
 
@@ -142,6 +158,7 @@ def client(cid: str):
         if not row:
             raise HTTPException(404, "cliente no encontrado")
         info = dict(zip([d[0] for d in cur.description], row))
+    info["tienda"], info["dueno"], info["telefono"] = humanize(cid)
     sales = pd.read_parquet(os.path.join(DATA, "train.parquet"),
                             filters=[("customer_id", "==", cid)]).sort_values("calmonth")
     hist = [{"mes": int(m), "transacciones": int(t), "cajas": round(float(b), 1)}
@@ -345,9 +362,11 @@ def retention_webcall(a: WebCallReq):
                        from v_clientes_riesgo where customer_id=%s""", [a.customer_id])
         row = cur.fetchone()
     terr, tam, proba = row if row else ("desconocido", "desconocido", 0)
+    tienda, dueno, _ = humanize(a.customer_id)
     body = {
         "agent_id": agent_id,
         "retell_llm_dynamic_variables": {
+            "nombre_negocio": tienda, "dueno": dueno,
             "territorio": str(terr), "tamano": str(tam),
             "probabilidad": str(round(float(proba) * 100)) if proba else "alto",
         },

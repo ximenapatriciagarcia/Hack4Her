@@ -7,6 +7,7 @@ export type Stats = {
 export type ClientRow = {
   customer_id: string; churn_proba: number; riesgo: string
   territory_d: string; comercial_subchannel_d: string; rtm_customer_size_d: string
+  tienda?: string; dueno?: string; telefono?: string
 }
 export type ClientDetail = {
   info: ClientRow
