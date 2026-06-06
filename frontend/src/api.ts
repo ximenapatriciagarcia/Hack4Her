@@ -49,6 +49,16 @@ export const postAssistant = (message: string) =>
     body: JSON.stringify({ message }),
   })
 
+export async function fetchTTS(message: string): Promise<string> {
+  const r = await fetch(BASE + '/tts', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message }),
+  })
+  if (!r.ok) throw new Error('tts')
+  return URL.createObjectURL(await r.blob())
+}
+
 export type SettingsState = Record<string, { set: boolean; masked: string }>
 export const getSettings = () => j<SettingsState>('/settings')
 export const postSettings = (s: Record<string, string>) =>

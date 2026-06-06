@@ -161,7 +161,10 @@ button { font-family: inherit; cursor: pointer; border: none; background: none; 
 .msg { font-size: 14px; line-height: 1.65; white-space: pre-wrap; max-width: 86%; }
 .msg.user { align-self: flex-end; background: var(--invert); color: var(--on-invert); padding: 12px 16px; border-radius: 16px 16px 3px 16px; }
 .msg.bot { align-self: flex-start; }
-.msg.bot .who { font-family: 'JetBrains Mono', monospace; font-size: 10px; text-transform: uppercase; letter-spacing: .14em; color: var(--fg-faint); margin-bottom: 7px; }
+.msg.bot .who { display: flex; align-items: center; gap: 10px; font-family: 'JetBrains Mono', monospace; font-size: 10px; text-transform: uppercase; letter-spacing: .14em; color: var(--fg-faint); margin-bottom: 7px; }
+.speak { font-family: 'JetBrains Mono', monospace; font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: var(--fg-faint); border: 1px solid var(--border); border-radius: 999px; padding: 3px 10px; transition: all .2s; }
+.speak:hover { color: var(--fg); border-color: var(--border-strong); }
+.speak.on { color: var(--accent); border-color: var(--accent); }
 .chat-input { display: flex; gap: 8px; border-top: 1px solid var(--border); padding-top: 16px; }
 .chat-input input { flex: 1; font-family: inherit; font-size: 14px; padding: 13px 16px; background: var(--bg-elev); border: 1px solid var(--border); color: var(--fg); border-radius: 999px; transition: border-color .2s; }
 .chat-input input:focus { outline: none; border-color: var(--fg); }

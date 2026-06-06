@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { sileo } from 'sileo'
 import {
   getStats, getClients, getClient, getDrivers, getSegmentos, postAction,
-  getSettings, postSettings, postAssistant,
+  getSettings, postSettings, postAssistant, fetchTTS,
   type Stats, type ClientRow, type ClientDetail, type Driver, type Segmentos, type SettingsState,
 } from './api'
 
@@ -233,6 +233,22 @@ function AgentView() {
   const [log, setLog] = useState<{ role: 'user' | 'bot'; text: string }[]>([])
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
+  const [speaking, setSpeaking] = useState<number | null>(null)
+
+  const speak = async (i: number, text: string) => {
+    if (speaking !== null) return
+    setSpeaking(i)
+    try {
+      const url = await fetchTTS(text)
+      const audio = new Audio(url)
+      audio.onended = () => setSpeaking(null)
+      audio.onerror = () => setSpeaking(null)
+      await audio.play()
+    } catch {
+      setSpeaking(null)
+      sileo.error({ title: 'No se pudo generar la voz', description: 'Revisa la API key de ElevenLabs en Ajustes' })
+    }
+  }
 
   const send = async (msg?: string) => {
     const m = (msg ?? input).trim()
@@ -265,7 +281,14 @@ function AgentView() {
             )}
             {log.map((m, i) => (
               <div key={i} className={`msg ${m.role}`}>
-                {m.role === 'bot' && <div className="who">Centinela</div>}
+                {m.role === 'bot' && (
+                  <div className="who">
+                    Centinela
+                    <button className={`speak ${speaking === i ? 'on' : ''}`} onClick={() => speak(i, m.text)}>
+                      {speaking === i ? '◼ sonando' : '▶ voz'}
+                    </button>
+                  </div>
+                )}
                 {m.text}
               </div>
             ))}

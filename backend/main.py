@@ -9,7 +9,7 @@ import re
 import subprocess
 import pandas as pd
 import psycopg
-from fastapi import FastAPI, Query, HTTPException
+from fastapi import FastAPI, Query, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -285,3 +285,44 @@ def assistant(a: Ask):
         return {"reply": text.strip()}
     except Exception:
         return {"reply": "No pude generar la respuesta (revisa la API key de Gemini en Ajustes)."}
+
+
+# ---------------- VOZ (ElevenLabs) ----------------
+def elevenlabs_key() -> str:
+    k = get_setting("elevenlabs_api_key")
+    if k:
+        return k
+    try:
+        for line in open(os.path.expanduser("~/dimos/.env")):
+            if line.strip().startswith("ELEVENLABS_API_KEY"):
+                return line.split("=", 1)[1].strip().strip('"').strip("'")
+    except Exception:
+        pass
+    return os.environ.get("ELEVENLABS_API_KEY", "")
+
+
+@app.post("/tts")
+def tts(a: Ask):
+    key = elevenlabs_key()
+    if not key:
+        raise HTTPException(400, "Falta la API key de ElevenLabs (configúrala en Ajustes)")
+    voice = get_setting("elevenlabs_voice_id") or "cgSgspJ2msm6clMCkdW9"
+    body = {
+        "text": a.message[:900],
+        "model_id": "eleven_multilingual_v2",
+        "voice_settings": {"stability": 0.3, "similarity_boost": 0.75},
+    }
+    pf, out = "/tmp/_tts_body.json", "/tmp/_tts_out.mp3"
+    with open(pf, "w", encoding="utf-8") as f:
+        json.dump(body, f, ensure_ascii=False)
+    url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice}"
+    try:
+        subprocess.run(
+            ["curl", "-s", "-X", "POST", url, "-H", f"xi-api-key: {key}",
+             "-H", "Content-Type: application/json", "-H", "Accept: audio/mpeg",
+             "--data", "@" + pf, "-o", out], timeout=45)
+    except Exception:
+        raise HTTPException(502, "Error llamando a ElevenLabs")
+    if os.path.exists(out) and os.path.getsize(out) > 1000:
+        return Response(content=open(out, "rb").read(), media_type="audio/mpeg")
+    raise HTTPException(502, "ElevenLabs no devolvió audio (revisa la API key)")
