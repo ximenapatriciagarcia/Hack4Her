@@ -5,6 +5,8 @@ desde Parquet (filtro pushdown, sin cargar 5M filas en memoria).
 """
 import os
 import json
+import re
+import subprocess
 import pandas as pd
 import psycopg
 from fastapi import FastAPI, Query, HTTPException
@@ -208,3 +210,78 @@ class SettingsIn(BaseModel):
 def post_settings(s: SettingsIn):
     save_settings(s.model_dump())
     return {"ok": True}
+
+
+# ---------------- AGENTE IA (Gemini) ----------------
+def gemini_key() -> str:
+    k = get_setting("gemini_api_key")
+    if k:
+        return k
+    # Fallback: key de respaldo (proyectos Veo/Gemini) para desarrollo
+    try:
+        txt = open(os.path.expanduser("~/Desktop/Beemotional-LandingPage/generate-sequence.py")).read()
+        m = re.search(r"(AQ\.[A-Za-z0-9_\-]+)", txt)
+        if m:
+            return m.group(1)
+    except Exception:
+        pass
+    return os.environ.get("GEMINI_API_KEY", "")
+
+
+def build_context() -> str:
+    with db() as c, c.cursor() as cur:
+        cur.execute("select count(*), count(*) filter (where riesgo='alto') from churn_scores")
+        total, alto = cur.fetchone()
+        cur.execute("""select rtm_customer_size_d, round(100*avg(churn_proba)::numeric,1), count(*)
+                       from v_clientes_riesgo group by 1 order by 2 desc""")
+        seg = cur.fetchall()
+        cur.execute("""select customer_id, round((churn_proba*100)::numeric,1), territory_d,
+                              comercial_subchannel_d, rtm_customer_size_d
+                       from v_clientes_riesgo order by churn_proba desc limit 15""")
+        top = cur.fetchall()
+    drv = [DRIVER_LABELS.get(f, f) for f in IMPORTANCE.head(8)["feature"].tolist()]
+    L = [f"Total de clientes activos: {total}. En riesgo ALTO: {alto}.",
+         "Churn promedio por tamaño de tienda: " + "; ".join(f"{s[0]} {s[1]}% (n={s[2]})" for s in seg),
+         "Drivers de churn (mayor a menor): " + ", ".join(drv),
+         "Top 15 clientes en mayor riesgo (id · prob · territorio · canal · tamaño):"]
+    L += [f"- {t[0][:10]}… {t[1]}% · {t[2]} · {t[3]} · {t[4]}" for t in top]
+    return "\n".join(L)
+
+
+class Ask(BaseModel):
+    message: str
+
+
+@app.post("/assistant")
+def assistant(a: Ask):
+    key = gemini_key()
+    if not key:
+        return {"reply": "Configura la API key de Gemini en Ajustes para activar el agente."}
+    system = (
+        "Eres Centinela, el asistente de retención de clientes de Arca Continental "
+        "(distribuye refrescos a tienditas de abarrotes). Ayudas al gerente comercial a "
+        "entender el churn y a priorizar acciones de retención. Responde SIEMPRE en español, "
+        "breve y accionable. Apóyate solo en los datos del contexto; si te piden algo fuera de "
+        "ellos, dilo.\n\nCONTEXTO ACTUAL:\n" + build_context()
+    )
+    body = {
+        "systemInstruction": {"parts": [{"text": system}]},
+        "contents": [{"role": "user", "parts": [{"text": a.message}]}],
+        "generationConfig": {"temperature": 0.4, "maxOutputTokens": 700},
+    }
+    pf = "/tmp/_gemini_body.json"
+    with open(pf, "w", encoding="utf-8") as f:
+        json.dump(body, f, ensure_ascii=False)
+    model = "gemini-flash-latest"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
+    try:
+        r = subprocess.run(
+            ["curl", "-s", "-X", "POST", url, "-H", "Content-Type: application/json", "--data", "@" + pf],
+            capture_output=True, text=True, timeout=45)
+        data = json.loads(r.stdout)
+        if "error" in data:
+            return {"reply": f"Gemini devolvió un error: {data['error'].get('message', 'desconocido')[:160]}"}
+        text = data["candidates"][0]["content"]["parts"][0]["text"]
+        return {"reply": text.strip()}
+    except Exception:
+        return {"reply": "No pude generar la respuesta (revisa la API key de Gemini en Ajustes)."}

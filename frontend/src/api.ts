@@ -42,6 +42,13 @@ export const postAction = (a: { customer_id: string; accion: string; notas?: str
     body: JSON.stringify(a),
   })
 
+export const postAssistant = (message: string) =>
+  j<{ reply: string }>('/assistant', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message }),
+  })
+
 export type SettingsState = Record<string, { set: boolean; masked: string }>
 export const getSettings = () => j<SettingsState>('/settings')
 export const postSettings = (s: Record<string, string>) =>

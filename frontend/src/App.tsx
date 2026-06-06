@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { sileo } from 'sileo'
 import {
   getStats, getClients, getClient, getDrivers, getSegmentos, postAction,
-  getSettings, postSettings,
+  getSettings, postSettings, postAssistant,
   type Stats, type ClientRow, type ClientDetail, type Driver, type Segmentos, type SettingsState,
 } from './api'
 
@@ -222,6 +222,73 @@ function SettingsView() {
   )
 }
 
+const SUGERENCIAS = [
+  '¿Quiénes son mis 10 clientes más en riesgo?',
+  '¿Por qué se van las tienditas Mini?',
+  '¿Qué territorio pierde más clientes?',
+  '¿Qué acción tomo esta semana?',
+]
+
+function AgentView() {
+  const [log, setLog] = useState<{ role: 'user' | 'bot'; text: string }[]>([])
+  const [input, setInput] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  const send = async (msg?: string) => {
+    const m = (msg ?? input).trim()
+    if (!m || busy) return
+    setLog(l => [...l, { role: 'user', text: m }])
+    setInput(''); setBusy(true)
+    try {
+      const r = await postAssistant(m)
+      setLog(l => [...l, { role: 'bot', text: r.reply }])
+    } catch {
+      setLog(l => [...l, { role: 'bot', text: 'No pude responder. Revisa la API key de Gemini en Ajustes.' }])
+    } finally { setBusy(false) }
+  }
+
+  return (
+    <main className="container">
+      <section className="section" style={{ marginBottom: 0 }}>
+        <div className="section-label">Agente · Centinela</div>
+        <div className="chat">
+          <div className="chat-log">
+            {log.length === 0 && (
+              <div className="chat-empty">
+                <p className="mono" style={{ color: 'var(--fg-faint)', fontSize: 13 }}>
+                  Pregúntame sobre el churn de tus clientes.
+                </p>
+                <div className="suggest">
+                  {SUGERENCIAS.map(s => <button key={s} className="chip" onClick={() => send(s)}>{s}</button>)}
+                </div>
+              </div>
+            )}
+            {log.map((m, i) => (
+              <div key={i} className={`msg ${m.role}`}>
+                {m.role === 'bot' && <div className="who">Centinela</div>}
+                {m.text}
+              </div>
+            ))}
+            {busy && (
+              <div className="msg bot"><div className="who">Centinela</div>
+                <span className="mono" style={{ color: 'var(--fg-faint)' }}>pensando…</span></div>
+            )}
+          </div>
+          <div className="chat-input">
+            <input
+              value={input}
+              onChange={e => setInput(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') send() }}
+              placeholder="Escribe tu pregunta…"
+            />
+            <button className="chat-send" onClick={() => send()} disabled={busy}>Enviar</button>
+          </div>
+        </div>
+      </section>
+    </main>
+  )
+}
+
 const ICONS: Record<string, string> = {
   target: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.6"/>',
   sliders: '<line x1="4" y1="8" x2="20" y2="8"/><circle cx="9" cy="8" r="2.3"/><line x1="4" y1="16" x2="20" y2="16"/><circle cx="15" cy="16" r="2.3"/>',
@@ -235,9 +302,10 @@ function Icon({ name }: { name: string }) {
   )
 }
 
-type View = 'dashboard' | 'settings'
+type View = 'dashboard' | 'agent' | 'settings'
 const MODULES: { id: View; label: string; icon: string }[] = [
   { id: 'dashboard', label: 'Radar', icon: 'target' },
+  { id: 'agent', label: 'Agente', icon: 'bot' },
   { id: 'settings', label: 'Ajustes', icon: 'sliders' },
 ]
 
@@ -267,7 +335,7 @@ export default function App() {
       </aside>
 
       <div className="content">
-        {view === 'dashboard' ? <DashboardView /> : <SettingsView />}
+        {view === 'dashboard' ? <DashboardView /> : view === 'agent' ? <AgentView /> : <SettingsView />}
       </div>
     </div>
   )
