@@ -59,7 +59,8 @@ def humanize(cid: str):
 
 # ---------------- SETTINGS (API keys) ----------------
 SETTINGS_KEYS = ["supabase_url", "supabase_anon_key", "supabase_service_key", "supabase_db_url",
-                 "gemini_api_key", "elevenlabs_api_key", "retell_api_key", "elevenlabs_voice_id"]
+                 "gemini_api_key", "elevenlabs_api_key", "retell_api_key", "elevenlabs_voice_id",
+                 "retell_from_number"]
 
 
 def load_settings() -> dict:
@@ -72,6 +73,7 @@ def load_settings() -> dict:
         "elevenlabs_api_key": os.environ.get("ELEVENLABS_API_KEY", ""),
         "retell_api_key": os.environ.get("RETELL_API_KEY", ""),
         "elevenlabs_voice_id": os.environ.get("ELEVENLABS_VOICE_ID", "cgSgspJ2msm6clMCkdW9"),
+        "retell_from_number": os.environ.get("RETELL_FROM_NUMBER", ""),
     }
     if os.path.exists(SETTINGS_FILE):
         try:
@@ -230,6 +232,7 @@ class SettingsIn(BaseModel):
     elevenlabs_api_key: str = ""
     retell_api_key: str = ""
     elevenlabs_voice_id: str = ""
+    retell_from_number: str = ""
 
 
 @app.post("/settings")
@@ -450,3 +453,61 @@ def retention_calls(limit: int = 20):
             row["tienda"], row["dueno"], _ = humanize(row["customer_id"])
         row["created_at"] = str(row["created_at"])
     return {"calls": rows}
+
+
+class PhoneCallReq(BaseModel):
+    customer_id: str
+    to_number: str
+
+
+@app.post("/retention/phonecall")
+def retention_phonecall(a: PhoneCallReq):
+    """Llamada telefónica REAL: el agente marca a un número (requiere from_number en Ajustes)."""
+    key = get_setting("retell_api_key")
+    agent_id = get_setting("retell_agent_id")
+    from_number = get_setting("retell_from_number")
+    if not key or not agent_id:
+        raise HTTPException(400, "Falta la API key o el agente de Retell")
+    if not from_number:
+        raise HTTPException(400, "Falta el número Retell 'from' — cómpralo/impórtalo y ponlo en Ajustes")
+    with db() as c, c.cursor() as cur:
+        cur.execute("""select territory_d, rtm_customer_size_d, churn_proba
+                       from v_clientes_riesgo where customer_id=%s""", [a.customer_id])
+        row = cur.fetchone()
+    terr, tam, proba = row if row else ("desconocido", "desconocido", 0)
+    tienda, dueno, _ = humanize(a.customer_id)
+    body = {
+        "from_number": from_number, "to_number": a.to_number, "override_agent_id": agent_id,
+        "retell_llm_dynamic_variables": {
+            "nombre_negocio": tienda, "dueno": dueno, "territorio": str(terr), "tamano": str(tam),
+            "probabilidad": str(round(float(proba) * 100)) if proba else "alto",
+        },
+        "metadata": {"customer_id": a.customer_id},
+    }
+    pf = "/tmp/_phonecall.json"
+    with open(pf, "w", encoding="utf-8") as f:
+        json.dump(body, f, ensure_ascii=False)
+    r = subprocess.run(["curl", "-s", "-X", "POST", "https://api.retellai.com/v2/create-phone-call",
+                        "-H", f"Authorization: Bearer {key}", "-H", "Content-Type: application/json",
+                        "--data", "@" + pf], capture_output=True, text=True, timeout=30)
+    try:
+        data = json.loads(r.stdout)
+    except Exception:
+        raise HTTPException(502, "Retell no respondió")
+    if "call_id" not in data:
+        raise HTTPException(502, f"Retell: {data.get('message', 'no se pudo crear la llamada')}")
+    return {"call_id": data["call_id"], "status": data.get("call_status")}
+
+
+_TREND = None
+
+
+@app.get("/trend")
+def trend():
+    """Tasa de churn (fila-mes) por mes — para la gráfica de tendencia."""
+    global _TREND
+    if _TREND is None:
+        df = pd.read_parquet(os.path.join(DATA, "train.parquet"), columns=["calmonth", "target"])
+        g = df.groupby("calmonth")["target"].mean()
+        _TREND = [{"mes": int(m), "rate": round(float(r) * 100, 3)} for m, r in g.items()]
+    return {"trend": _TREND}

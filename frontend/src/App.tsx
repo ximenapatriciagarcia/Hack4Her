@@ -2,8 +2,8 @@ import { useEffect, useState, useCallback, useRef } from 'react'
 import { sileo } from 'sileo'
 import { RetellWebClient } from 'retell-client-js-sdk'
 import {
-  getStats, getClients, getClient, getDrivers, getSegmentos, postAction,
-  getSettings, postSettings, postAssistant, fetchTTS, postWebCall, getCallResult, getCalls,
+  getStats, getClients, getClient, getDrivers, getSegmentos, getTrend, postAction,
+  getSettings, postSettings, postAssistant, fetchTTS, postWebCall, postPhoneCall, getCallResult, getCalls,
   type Stats, type ClientRow, type ClientDetail, type Driver, type Segmentos, type SettingsState, type CallLog,
 } from './api'
 
@@ -40,10 +40,38 @@ function Sparkline({ values }: { values: number[] }) {
   )
 }
 
+function LineChart({ data }: { data: { mes: number; rate: number }[] }) {
+  if (data.length < 2) return <div className="chart" style={{ height: 120 }}><span className="skeleton" style={{ width: '100%', height: 120 }} /></div>
+  const w = 900, h = 150, pad = 10
+  const max = Math.max(...data.map(d => d.rate)), min = Math.min(...data.map(d => d.rate))
+  const pts = data.map((d, i) => [(i / (data.length - 1)) * w,
+    h - pad - ((d.rate - min) / Math.max(max - min, 0.01)) * (h - pad * 2)] as [number, number])
+  const line = pts.map(p => `${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(' ')
+  const last = pts[pts.length - 1]
+  const fmt = (m: number) => `${String(m).slice(4, 6)}/${String(m).slice(2, 4)}`
+  return (
+    <div className="chart">
+      <svg viewBox={`0 0 ${w} ${h + 18}`} preserveAspectRatio="none">
+        <polygon className="area" points={`0,${h} ${line} ${w},${h}`} />
+        <polyline className="line" points={line} />
+        <circle className="dot-last" cx={last[0]} cy={last[1]} r="4" />
+        {data.map((d, i) => (i % 4 === 0 || i === data.length - 1) && (
+          <text key={i} className="axis" x={(i / (data.length - 1)) * w} y={h + 13} textAnchor="middle">{fmt(d.mes)}</text>
+        ))}
+      </svg>
+    </div>
+  )
+}
+
 function DashboardView() {
   const [stats, setStats] = useState<Stats | null>(null)
   const [rows, setRows] = useState<ClientRow[]>([])
   const [riesgo, setRiesgo] = useState<string | null>('alto')
+  const [q, setQ] = useState('')
+  const [sortKey, setSortKey] = useState<'proba' | 'tienda' | 'territory_d' | 'rtm_customer_size_d'>('proba')
+  const [sortDir, setSortDir] = useState<1 | -1>(-1)
+  const [limit, setLimit] = useState(25)
+  const [trend, setTrend] = useState<{ mes: number; rate: number }[]>([])
   const [drivers, setDrivers] = useState<Driver[]>([])
   const [seg, setSeg] = useState<Segmentos | null>(null)
   const [sel, setSel] = useState<ClientDetail | null>(null)
@@ -77,14 +105,42 @@ function DashboardView() {
   }
   const hangup = () => { webClient.current?.stopCall(); setCallState('idle') }
 
+  const [phoneNum, setPhoneNum] = useState('')
+  const callPhone = async (id: string) => {
+    if (!phoneNum.trim()) { sileo.error({ title: 'Escribe un número a marcar' }); return }
+    try {
+      await postPhoneCall(id, phoneNum.trim())
+      sileo.success({ title: 'Llamando…', description: `El agente marca a ${phoneNum}` })
+    } catch {
+      sileo.error({ title: 'No se pudo llamar', description: 'Configura el número Retell (from) en Ajustes' })
+    }
+  }
+
   useEffect(() => {
     getStats().then(setStats).catch(() => {})
     getDrivers().then(d => setDrivers(d.drivers_globales)).catch(() => {})
     getSegmentos().then(setSeg).catch(() => {})
+    getTrend().then(d => setTrend(d.trend)).catch(() => {})
   }, [])
   useEffect(() => {
-    getClients({ riesgo: riesgo || undefined, limit: 25 }).then(d => setRows(d.clients)).catch(() => {})
-  }, [riesgo])
+    getClients({ riesgo: riesgo || undefined, limit }).then(d => setRows(d.clients)).catch(() => {})
+  }, [riesgo, limit])
+
+  const toggleSort = (k: typeof sortKey) => {
+    if (sortKey === k) setSortDir(d => (d === 1 ? -1 : 1))
+    else { setSortKey(k); setSortDir(k === 'proba' ? -1 : 1) }
+  }
+  const viewRows = [...rows]
+    .filter(c => {
+      if (!q.trim()) return true
+      const t = `${c.tienda} ${c.territory_d} ${c.comercial_subchannel_d} ${c.rtm_customer_size_d}`.toLowerCase()
+      return t.includes(q.trim().toLowerCase())
+    })
+    .sort((a, b) => {
+      const va = sortKey === 'proba' ? a.churn_proba : String((a as Record<string, unknown>)[sortKey] ?? '')
+      const vb = sortKey === 'proba' ? b.churn_proba : String((b as Record<string, unknown>)[sortKey] ?? '')
+      return va < vb ? -sortDir : va > vb ? sortDir : 0
+    })
 
   const openClient = useCallback(async (id: string) => {
     setLoadingSel(true); setSel(null)
@@ -103,6 +159,8 @@ function DashboardView() {
 
   const sizeSeg = (seg?.rtm_customer_size_d ?? []).filter(s => s.grupo !== 'Desconocido').slice(0, 6)
   const segMax = Math.max(...sizeSeg.map(s => s.riesgo_prom), 1)
+  const terrSeg = (seg?.territory_d ?? []).slice(0, 6)
+  const terrMax = Math.max(...terrSeg.map(s => s.riesgo_prom), 1)
 
   return (
     <>
@@ -110,15 +168,24 @@ function DashboardView() {
         <section className="section">
           <div className="section-label">Panorama</div>
           <div className="kpi-grid">
-            <div className="kpi"><div className="kpi-label">Clientes</div><div className="kpi-value mono">{stats ? fmt(stats.total_clientes) : '—'}</div><div className="kpi-sub">en cartera activa</div></div>
-            <div className="kpi"><div className="kpi-label">Riesgo alto</div><div className="kpi-value mono accent">{stats ? fmt(stats.riesgo_alto) : '—'}</div><div className="kpi-sub">{stats ? `${stats.pct_riesgo_alto}% de la cartera` : ''}</div></div>
-            <div className="kpi"><div className="kpi-label">Churn esperado</div><div className="kpi-value mono">{stats ? fmt(stats.churn_esperado) : '—'}</div><div className="kpi-sub">próximo mes · feb-2026</div></div>
-            <div className="kpi"><div className="kpi-label">Acciones</div><div className="kpi-value mono">{stats ? fmt(stats.acciones_registradas) : '—'}</div><div className="kpi-sub">de retención</div></div>
+            <div className="kpi"><div className="kpi-label">Clientes</div><div className="kpi-value mono">{stats ? fmt(stats.total_clientes) : <span className="skeleton sk-kpi" />}</div><div className="kpi-sub">en cartera activa</div></div>
+            <div className="kpi"><div className="kpi-label">Riesgo alto</div><div className="kpi-value mono accent">{stats ? fmt(stats.riesgo_alto) : <span className="skeleton sk-kpi" />}</div><div className="kpi-sub">{stats ? `${stats.pct_riesgo_alto}% de la cartera` : ' '}</div></div>
+            <div className="kpi"><div className="kpi-label">Churn esperado</div><div className="kpi-value mono">{stats ? fmt(stats.churn_esperado) : <span className="skeleton sk-kpi" />}</div><div className="kpi-sub">próximo mes · feb-2026</div></div>
+            <div className="kpi"><div className="kpi-label">Acciones</div><div className="kpi-value mono">{stats ? fmt(stats.acciones_registradas) : <span className="skeleton sk-kpi" />}</div><div className="kpi-sub">de retención</div></div>
           </div>
+        </section>
+
+        <section className="section enter">
+          <div className="section-label">Tendencia de churn · histórico mensual</div>
+          <LineChart data={trend} />
         </section>
 
         <section className="section">
           <div className="section-label">Radar de clientes</div>
+          <div className="search">
+            <svg className="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>
+            <input placeholder="Buscar tiendita, territorio o canal…" value={q} onChange={e => setQ(e.target.value)} />
+          </div>
           <div className="filters">
             {(['alto', 'medio', 'bajo', null] as (string | null)[]).map(r => (
               <button key={r ?? 'todos'} className={`chip ${riesgo === r ? 'active' : ''}`} onClick={() => setRiesgo(r)}>
@@ -128,33 +195,65 @@ function DashboardView() {
           </div>
           <table className="table">
             <thead>
-              <tr><th>Cliente</th><th>Territorio</th><th>Canal</th><th>Tamaño</th><th>Riesgo</th><th className="num">Probabilidad</th></tr>
+              <tr>
+                <th className="sortable" onClick={() => toggleSort('tienda')}>Cliente {sortKey === 'tienda' && <span className="th-arrow">{sortDir === 1 ? '↑' : '↓'}</span>}</th>
+                <th className="sortable" onClick={() => toggleSort('territory_d')}>Territorio {sortKey === 'territory_d' && <span className="th-arrow">{sortDir === 1 ? '↑' : '↓'}</span>}</th>
+                <th>Canal</th>
+                <th className="sortable" onClick={() => toggleSort('rtm_customer_size_d')}>Tamaño {sortKey === 'rtm_customer_size_d' && <span className="th-arrow">{sortDir === 1 ? '↑' : '↓'}</span>}</th>
+                <th>Riesgo</th>
+                <th className="num sortable" onClick={() => toggleSort('proba')}>Probabilidad {sortKey === 'proba' && <span className="th-arrow">{sortDir === 1 ? '↑' : '↓'}</span>}</th>
+              </tr>
             </thead>
             <tbody>
-              {rows.map(c => (
-                <tr key={c.customer_id} onClick={() => openClient(c.customer_id)}>
-                  <td><div className="tienda-name">{c.tienda}</div><div className="cust-id">{c.customer_id.slice(0, 8)}…</div></td>
-                  <td>{c.territory_d}</td>
-                  <td>{c.comercial_subchannel_d}</td>
-                  <td>{c.rtm_customer_size_d}</td>
-                  <td><RiskBadge r={c.riesgo} /></td>
-                  <td className="num proba">{(c.churn_proba * 100).toFixed(1)}%</td>
-                </tr>
-              ))}
+              {rows.length === 0
+                ? Array.from({ length: 8 }).map((_, i) => (
+                  <tr key={i}><td colSpan={6}><span className="skeleton sk-line" /></td></tr>
+                ))
+                : viewRows.map((c, i) => (
+                  <tr key={c.customer_id} className="enter" style={{ animationDelay: `${Math.min(i, 14) * 28}ms` }} onClick={() => openClient(c.customer_id)}>
+                    <td><div className="tienda-name">{c.tienda}</div><div className="cust-id">{c.customer_id.slice(0, 8)}…</div></td>
+                    <td>{c.territory_d}</td>
+                    <td>{c.comercial_subchannel_d}</td>
+                    <td>{c.rtm_customer_size_d}</td>
+                    <td><RiskBadge r={c.riesgo} /></td>
+                    <td className="num proba">{(c.churn_proba * 100).toFixed(1)}%</td>
+                  </tr>
+                ))}
+              {rows.length > 0 && viewRows.length === 0 && (
+                <tr><td colSpan={6} className="mono" style={{ color: 'var(--fg-faint)', textAlign: 'center', padding: '24px' }}>Sin coincidencias para “{q}”.</td></tr>
+              )}
             </tbody>
           </table>
+          {rows.length > 0 && !q && <button className="load-more" onClick={() => setLimit(l => l + 25)}>Cargar más clientes</button>}
         </section>
 
         <section className="section">
-          <div className="section-label">Causa raíz · por tamaño de tienda</div>
-          <div className="bars">
-            {sizeSeg.map(s => (
-              <div className="bar-row" key={s.grupo}>
-                <div className="bar-label">{s.grupo}</div>
-                <div className="bar-track"><div className="bar-fill" style={{ width: `${(s.riesgo_prom / segMax) * 100}%` }} /></div>
-                <div className="bar-val">{s.riesgo_prom}%</div>
+          <div className="section-label">Causa raíz · dónde se concentra la fuga</div>
+          <div className="causa-grid">
+            <div className="causa-col">
+              <div className="bars-title">Por tamaño de tienda</div>
+              <div className="bars">
+                {sizeSeg.map(s => (
+                  <div className="bar-row" key={s.grupo}>
+                    <div className="bar-label">{s.grupo}</div>
+                    <div className="bar-track"><div className="bar-fill" style={{ width: `${(s.riesgo_prom / segMax) * 100}%` }} /></div>
+                    <div className="bar-val">{s.riesgo_prom}%</div>
+                  </div>
+                ))}
               </div>
-            ))}
+            </div>
+            <div className="causa-col">
+              <div className="bars-title">Por territorio (top)</div>
+              <div className="bars">
+                {terrSeg.map(s => (
+                  <div className="bar-row" key={s.grupo}>
+                    <div className="bar-label">{s.grupo}</div>
+                    <div className="bar-track"><div className="bar-fill" style={{ width: `${(s.riesgo_prom / terrMax) * 100}%` }} /></div>
+                    <div className="bar-val">{s.riesgo_prom}%</div>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
         </section>
 
@@ -207,6 +306,11 @@ function DashboardView() {
                     <span className="live-dot" /> En llamada — Colgar
                   </button>
                 )}
+                <div className="phone-call">
+                  <input className="phone-input" placeholder="+52 55 1234 5678"
+                    value={phoneNum} onChange={e => setPhoneNum(e.target.value)} />
+                  <button className="btn-call" onClick={() => callPhone(sel.info.customer_id)}>Llamar al teléfono</button>
+                </div>
               </>
             )}
           </aside>
@@ -224,12 +328,17 @@ const FIELDS = [
   { k: 'gemini_api_key', label: 'Gemini API Key', hint: 'Google AI Studio — motor del agente IA' },
   { k: 'elevenlabs_api_key', label: 'ElevenLabs API Key', hint: 'Voz del agente y de las llamadas' },
   { k: 'retell_api_key', label: 'Retell API Key', hint: 'Llamadas automáticas de retención' },
+  { k: 'retell_from_number', label: 'Retell Número (from)', hint: 'Número saliente — US de Retell o Twilio para MX. Formato +52…' },
   { k: 'elevenlabs_voice_id', label: 'ElevenLabs Voice ID', hint: 'Voz de Sara (Jessica por defecto)' },
 ] as const
 
 function SettingsView() {
   const [s, setS] = useState<SettingsState>({})
   const [form, setForm] = useState<Record<string, string>>({})
+  const [calling, setCalling] = useState(false)
+  const [lada, setLada] = useState('+52')
+  const [num, setNum] = useState('')
+  const webRef = useRef<RetellWebClient | null>(null)
 
   useEffect(() => { getSettings().then(setS).catch(() => {}) }, [])
 
@@ -240,6 +349,34 @@ function SettingsView() {
       setForm({}); getSettings().then(setS)
     } catch {
       sileo.error({ title: 'No se pudo guardar', description: 'Revisa la conexión con el backend' })
+    }
+  }
+
+  const testWebCall = async () => {
+    setCalling(true)
+    try {
+      const cl = await getClients({ limit: 1 })
+      const cid = cl.clients[0]?.customer_id
+      if (!cid) throw new Error('sin clientes')
+      const { access_token } = await postWebCall(cid)
+      const client = new RetellWebClient(); webRef.current = client
+      client.on('call_ended', () => setCalling(false))
+      client.on('error', () => setCalling(false))
+      await client.startCall({ accessToken: access_token })
+    } catch {
+      setCalling(false)
+      sileo.error({ title: 'No se pudo iniciar la web call', description: 'Revisa la API key de Retell' })
+    }
+  }
+  const stopWebCall = () => { webRef.current?.stopCall(); setCalling(false) }
+  const testPhoneCall = async () => {
+    if (!num.trim()) { sileo.error({ title: 'Escribe el número a marcar' }); return }
+    try {
+      const cl = await getClients({ limit: 1 })
+      await postPhoneCall(cl.clients[0]?.customer_id || '', (lada + num).replace(/\s/g, ''))
+      sileo.success({ title: 'Llamando…', description: `El agente marca a ${lada} ${num}` })
+    } catch {
+      sileo.error({ title: 'No se pudo llamar', description: 'Falta el número Retell (from) o el billing está pendiente' })
     }
   }
 
@@ -264,6 +401,28 @@ function SettingsView() {
             </div>
           ))}
           <button className="btn-primary" onClick={save}>Guardar ajustes</button>
+        </div>
+      </section>
+
+      <section className="section">
+        <div className="section-label">Probar llamada</div>
+        <div className="form">
+          {calling ? (
+            <button className="btn-call live" onClick={stopWebCall}>
+              <span className="live-dot" /> Web call en curso — habla con el agente · Colgar
+            </button>
+          ) : (
+            <button className="btn-primary" onClick={testWebCall}>▶ Probar Web Call (por el navegador)</button>
+          )}
+          <div className="field">
+            <label>Llamada telefónica de prueba</label>
+            <span className="hint">El agente marca a este número (requiere número Retell + billing activo)</span>
+            <div className="phone-call">
+              <input className="phone-input" style={{ maxWidth: 92 }} value={lada} onChange={e => setLada(e.target.value)} placeholder="+52" />
+              <input className="phone-input" value={num} onChange={e => setNum(e.target.value)} placeholder="55 1234 5678" />
+              <button className="btn-call" onClick={testPhoneCall}>Llamar</button>
+            </div>
+          </div>
         </div>
       </section>
     </main>

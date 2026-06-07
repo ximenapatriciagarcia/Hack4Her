@@ -36,6 +36,7 @@ export const getClients = (p: { riesgo?: string; limit?: number } = {}) => {
 export const getClient = (id: string) => j<ClientDetail>(`/client/${id}`)
 export const getDrivers = () => j<{ drivers_globales: Driver[] }>('/drivers')
 export const getSegmentos = () => j<Segmentos>('/segmentos')
+export const getTrend = () => j<{ trend: { mes: number; rate: number }[] }>('/trend')
 export const postAction = (a: { customer_id: string; accion: string; notas?: string }) =>
   j<{ ok: boolean; id: number }>('/actions', {
     method: 'POST',
@@ -65,6 +66,13 @@ export const postWebCall = (customer_id: string) =>
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ customer_id }),
+  })
+
+export const postPhoneCall = (customer_id: string, to_number: string) =>
+  j<{ call_id: string; status: string }>('/retention/phonecall', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ customer_id, to_number }),
   })
 
 export const postRetentionLog = (customer_id: string) =>
