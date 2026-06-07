@@ -265,9 +265,18 @@ def settings_test(tech: str):
             k = elevenlabs_key()
             if not k:
                 return {"ok": False, "message": "Sin API key de ElevenLabs"}
-            code = _http_code(["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
-                               "https://api.elevenlabs.io/v1/user", "-H", f"xi-api-key: {k}"])
-            return {"ok": code == "200", "message": "Key válida · voz disponible" if code == "200" else f"Key rechazada (HTTP {code})"}
+            voice = get_setting("elevenlabs_voice_id") or "cgSgspJ2msm6clMCkdW9"
+            pf = "/tmp/_el_test.json"
+            with open(pf, "w") as f:
+                json.dump({"text": ".", "model_id": "eleven_multilingual_v2"}, f)
+            code = _http_code(["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", "-X", "POST",
+                               f"https://api.elevenlabs.io/v1/text-to-speech/{voice}",
+                               "-H", f"xi-api-key: {k}", "-H", "Content-Type: application/json", "--data", "@" + pf])
+            if code == "200":
+                return {"ok": True, "message": "Key válida · TTS operativo"}
+            if code == "401":
+                return {"ok": False, "message": "Key sin permiso 'text_to_speech' — créala con ese scope en ElevenLabs"}
+            return {"ok": False, "message": f"TTS rechazado (HTTP {code})"}
         if tech == "retell":
             k = get_setting("retell_api_key")
             if not k:
@@ -426,12 +435,14 @@ def retention_webcall(a: WebCallReq):
         row = cur.fetchone()
     terr, tam, proba = row if row else ("desconocido", "desconocido", 0)
     tienda, dueno, _ = humanize(a.customer_id)
+    diag = diagnostico(a.customer_id).get("diagnostico", "")
     body = {
         "agent_id": agent_id,
         "retell_llm_dynamic_variables": {
             "nombre_negocio": tienda, "dueno": dueno,
             "territorio": str(terr), "tamano": str(tam),
             "probabilidad": str(round(float(proba) * 100)) if proba else "alto",
+            "diagnostico": diag or "Cliente en riesgo; pregúntale con tacto qué ha cambiado en su negocio.",
         },
         "metadata": {"customer_id": a.customer_id},
     }
@@ -450,6 +461,95 @@ def retention_webcall(a: WebCallReq):
         raise HTTPException(502, f"Retell: {data.get('message', 'sin access_token')}")
     return {"access_token": data["access_token"], "call_id": data.get("call_id"),
             "agent_id": agent_id}
+
+
+# ---------------- DIAGNÓSTICO PERSONALIZADO (Gemini + CONTEXTO_CHURN.md) ----------------
+_CONTEXTO = None
+
+
+def contexto_churn() -> str:
+    global _CONTEXTO
+    if _CONTEXTO is None:
+        try:
+            _CONTEXTO = open(os.path.join(ROOT, "CONTEXTO_CHURN.md"), encoding="utf-8").read()
+        except Exception:
+            _CONTEXTO = ""
+    return _CONTEXTO
+
+
+def _client_signals(cid: str) -> dict:
+    """Señales reales del negocio para que Gemini interprete su situación."""
+    with db() as c, c.cursor() as cur:
+        cur.execute("""select churn_proba, territory_d, comercial_subchannel_d, rtm_customer_size_d
+                       from v_clientes_riesgo where customer_id=%s""", [cid])
+        row = cur.fetchone()
+    proba, terr, canal, tam = row if row else (0, "?", "?", "?")
+    s = pd.read_parquet(os.path.join(DATA, "train.parquet"),
+                        filters=[("customer_id", "==", cid)]).sort_values("calmonth")
+    cajas = [float(x) for x in s["uni_boxes_sold_m"].tolist()]
+    pico = max(cajas) if cajas else 0
+    actual = cajas[-1] if cajas else 0
+    ceros6 = sum(1 for x in cajas[-6:] if x == 0)
+    nc_actual = nc_pico = 0
+    try:
+        co = pd.read_parquet(os.path.join(DATA, "coolers.parquet"),
+                             filters=[("customer_id", "==", cid)]).sort_values("calmonth")
+        nc = [float(x) for x in co["num_coolers"].tolist()]
+        nc_pico, nc_actual = (max(nc), nc[-1]) if nc else (0, 0)
+    except Exception:
+        pass
+    tienda, dueno, _ = humanize(cid)
+    return {
+        "negocio": tienda, "dueno": dueno, "territorio": terr, "tamano": tam, "canal": canal,
+        "probabilidad_riesgo_pct": round(float(proba) * 100),
+        "cajas_mes_actual": round(actual, 1), "cajas_mes_pico": round(pico, 1),
+        "pct_de_su_pico": round(100 * actual / pico) if pico else 0,
+        "cajas_ultimos_6_meses": [round(x, 1) for x in cajas[-6:]],
+        "meses_en_cero_ult6": ceros6,
+        "enfriadores_actual": nc_actual, "perdio_enfriador": nc_actual < nc_pico,
+    }
+
+
+@app.post("/retention/diagnostico/{cid}")
+def diagnostico(cid: str, refresh: bool = False):
+    """Gemini interpreta las señales del cliente + el contexto del churn → explicación personalizada."""
+    if not refresh:
+        with db() as c, c.cursor() as cur:
+            cur.execute("select diagnostico from churn_scores where customer_id=%s", [cid])
+            r = cur.fetchone()
+        if r and r[0]:
+            return {"diagnostico": r[0], "signals": _client_signals(cid), "cached": True}
+    key = gemini_key()
+    if not key:
+        return {"diagnostico": "", "error": "Falta API key de Gemini"}
+    sig = _client_signals(cid)
+    system = ("Eres analista de retención de Arca Continental. Este es el conocimiento del fenómeno de "
+              "deserción de tienditas (úsalo para interpretar):\n\n" + contexto_churn() +
+              "\n\nAhora analiza A ESTE negocio en concreto y redacta el diagnóstico siguiendo la instrucción "
+              "de la sección 8 (3-5 frases, español de México, sin tecnicismos, con 1-2 acciones).")
+    body = {
+        "systemInstruction": {"parts": [{"text": system}]},
+        "contents": [{"role": "user", "parts": [{"text": "Datos del negocio:\n" + json.dumps(sig, ensure_ascii=False)}]}],
+        "generationConfig": {"temperature": 0.6, "maxOutputTokens": 500, "thinkingConfig": {"thinkingBudget": 0}},
+    }
+    pf = "/tmp/_diag_body.json"
+    with open(pf, "w", encoding="utf-8") as f:
+        json.dump(body, f, ensure_ascii=False)
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key={key}"
+    try:
+        r = subprocess.run(["curl", "-s", "-X", "POST", url, "-H", "Content-Type: application/json", "--data", "@" + pf],
+                           capture_output=True, text=True, timeout=45)
+        data = json.loads(r.stdout)
+        parts = data["candidates"][0]["content"].get("parts", [])
+        texto = "".join(p.get("text", "") for p in parts).strip()
+    except Exception:
+        texto = ""
+    if not texto:
+        return {"diagnostico": "", "error": "Gemini no generó el diagnóstico", "signals": sig}
+    with db() as c, c.cursor() as cur:
+        cur.execute("update churn_scores set diagnostico=%s where customer_id=%s", [texto, cid])
+        c.commit()
+    return {"diagnostico": texto, "signals": sig, "cached": False}
 
 
 # Registrar la acción de llamada en el log
@@ -531,11 +631,13 @@ def retention_phonecall(a: PhoneCallReq):
         row = cur.fetchone()
     terr, tam, proba = row if row else ("desconocido", "desconocido", 0)
     tienda, dueno, _ = humanize(a.customer_id)
+    diag = diagnostico(a.customer_id).get("diagnostico", "")
     body = {
         "from_number": from_number, "to_number": a.to_number, "override_agent_id": agent_id,
         "retell_llm_dynamic_variables": {
             "nombre_negocio": tienda, "dueno": dueno, "territorio": str(terr), "tamano": str(tam),
             "probabilidad": str(round(float(proba) * 100)) if proba else "alto",
+            "diagnostico": diag or "Cliente en riesgo; pregúntale con tacto qué ha cambiado en su negocio.",
         },
         "metadata": {"customer_id": a.customer_id},
     }

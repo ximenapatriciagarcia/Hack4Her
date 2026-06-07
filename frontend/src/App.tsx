@@ -3,7 +3,7 @@ import { sileo } from 'sileo'
 import { RetellWebClient } from 'retell-client-js-sdk'
 import {
   getStats, getClients, getClient, getDrivers, getSegmentos, getTrend, postAction,
-  getSettings, postSettings, testConnection, postAssistant, fetchTTS, postWebCall, postPhoneCall, getCallResult, pollCallResult, getCalls,
+  getSettings, postSettings, testConnection, postAssistant, fetchTTS, postWebCall, postPhoneCall, getCallResult, pollCallResult, getCalls, postDiagnostico,
   type Stats, type ClientRow, type ClientDetail, type Driver, type Segmentos, type SettingsState, type CallLog,
 } from './api'
 
@@ -78,6 +78,8 @@ function DashboardView({ onGoToCalls }: { onGoToCalls?: () => void }) {
   const [loadingSel, setLoadingSel] = useState(false)
   const [callState, setCallState] = useState<'idle' | 'connecting' | 'live'>('idle')
   const webClient = useRef<RetellWebClient | null>(null)
+  const [diag, setDiag] = useState('')
+  const [diagBusy, setDiagBusy] = useState(false)
 
   const startCall = async (id: string) => {
     setCallState('connecting')
@@ -151,9 +153,20 @@ function DashboardView({ onGoToCalls }: { onGoToCalls?: () => void }) {
     })
 
   const openClient = useCallback(async (id: string) => {
-    setLoadingSel(true); setSel(null)
+    setLoadingSel(true); setSel(null); setDiag('')
     try { setSel(await getClient(id)) } finally { setLoadingSel(false) }
   }, [])
+
+  const generarDiag = async (id: string) => {
+    setDiagBusy(true)
+    try {
+      const r = await postDiagnostico(id)
+      if (r.diagnostico) setDiag(r.diagnostico)
+      else sileo.error({ title: 'No se pudo generar', description: r.error || 'Revisa la API key de Gemini' })
+    } catch {
+      sileo.error({ title: 'No se pudo generar el diagnóstico' })
+    } finally { setDiagBusy(false) }
+  }
 
   const registrarAccion = async (id: string) => {
     try {
@@ -301,8 +314,19 @@ function DashboardView({ onGoToCalls }: { onGoToCalls?: () => void }) {
                   <div className="attr"><div className="k">Dueño</div><div className="v">{sel.info.dueno}</div></div>
                 </div>
                 <h2>Trayectoria · cajas vendidas / mes</h2>
-                <div style={{ color: 'var(--fg)', margin: '14px 0 30px' }}>
+                <div style={{ color: 'var(--fg)', margin: '14px 0 26px' }}>
                   <Sparkline values={sel.historial_ventas.map(h => h.cajas)} />
+                </div>
+                <div className="diag">
+                  <div className="diag-head">
+                    <span className="diag-title"><span className="glyph-dot" />Diagnóstico IA · Gemini</span>
+                    <button className="btn-test" onClick={() => generarDiag(sel.info.customer_id)} disabled={diagBusy}>
+                      {diagBusy ? 'Analizando…' : diag ? 'Regenerar' : 'Generar'}
+                    </button>
+                  </div>
+                  {diag
+                    ? <p className="diag-text">{diag}</p>
+                    : <p className="diag-empty">Gemini interpreta las señales de este negocio + el contexto del churn: por qué está en riesgo y qué ofrecerle. Es lo que Sofía usa en la llamada.</p>}
                 </div>
                 <button className="btn-primary" onClick={() => registrarAccion(sel.info.customer_id)}>
                   Registrar acción de retención
@@ -362,8 +386,22 @@ function SettingsView() {
   const [lada, setLada] = useState('+52')
   const [num, setNum] = useState('')
   const webRef = useRef<RetellWebClient | null>(null)
+  const [testCli, setTestCli] = useState<ClientRow | null>(null)
+  const [testDiag, setTestDiag] = useState('')
+  const [testDiagBusy, setTestDiagBusy] = useState(false)
 
   useEffect(() => { getSettings().then(setS).catch(() => {}) }, [])
+  useEffect(() => { getClients({ limit: 1 }).then(d => setTestCli(d.clients[0] || null)).catch(() => {}) }, [])
+
+  const verTestDiag = async () => {
+    if (!testCli) return
+    setTestDiagBusy(true)
+    try {
+      const r = await postDiagnostico(testCli.customer_id)
+      setTestDiag(r.diagnostico || r.error || '—')
+    } catch { setTestDiag('No se pudo generar el diagnóstico') }
+    finally { setTestDiagBusy(false) }
+  }
 
   const save = async () => {
     try {
@@ -469,6 +507,19 @@ function SettingsView() {
       <section className="section">
         <div className="section-label">Probar llamada</div>
         <div className="form">
+          {testCli && (
+            <div className="diag">
+              <div className="diag-head">
+                <span className="diag-title"><span className="glyph-dot" />Prueba con · {testCli.tienda} ({testCli.dueno})</span>
+                <button className="btn-test" onClick={verTestDiag} disabled={testDiagBusy}>
+                  {testDiagBusy ? 'Analizando…' : 'Ver diagnóstico'}
+                </button>
+              </div>
+              {testDiag
+                ? <p className="diag-text">{testDiag}</p>
+                : <p className="diag-empty">La llamada de prueba lleva el diagnóstico IA de este cliente — Sofía hablará de sus problemas concretos, no genérico.</p>}
+            </div>
+          )}
           {calling ? (
             <button className="btn-call live" onClick={stopWebCall}>
               <span className="live-dot" /> Web call en curso — habla con el agente · Colgar

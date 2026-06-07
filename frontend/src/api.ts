@@ -105,6 +105,9 @@ export const getCalls = () => j<{ calls: CallLog[] }>('/retention/calls')
 
 export const testConnection = (tech: string) => j<{ ok: boolean; message: string }>(`/settings/test/${tech}`)
 
+export const postDiagnostico = (cid: string) =>
+  j<{ diagnostico: string; cached?: boolean; error?: string }>(`/retention/diagnostico/${cid}`, { method: 'POST' })
+
 export type SettingsState = Record<string, { set: boolean; masked: string }>
 export const getSettings = () => j<SettingsState>('/settings')
 export const postSettings = (s: Record<string, string>) =>
