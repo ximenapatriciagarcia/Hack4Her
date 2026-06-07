@@ -3,7 +3,7 @@ import { sileo } from 'sileo'
 import { RetellWebClient } from 'retell-client-js-sdk'
 import {
   getStats, getClients, getClient, getDrivers, getSegmentos, getTrend, postAction,
-  getSettings, postSettings, postAssistant, fetchTTS, postWebCall, postPhoneCall, getCallResult, getCalls,
+  getSettings, postSettings, postAssistant, fetchTTS, postWebCall, postPhoneCall, getCallResult, pollCallResult, getCalls,
   type Stats, type ClientRow, type ClientDetail, type Driver, type Segmentos, type SettingsState, type CallLog,
 } from './api'
 
@@ -108,11 +108,20 @@ function DashboardView({ onGoToCalls }: { onGoToCalls?: () => void }) {
   const [phoneNum, setPhoneNum] = useState('')
   const callPhone = async (id: string) => {
     if (!phoneNum.trim()) { sileo.warning({ title: 'Escribe un número a marcar' }); return }
-    sileo.promise(postPhoneCall(id, phoneNum.trim()), {
+    const req = postPhoneCall(id, phoneNum.trim())
+    sileo.promise(req, {
       loading: { title: 'Conectando llamada…', description: `Marcando a ${phoneNum}` },
-      success: { title: 'Llamada en curso', description: `Sofía está marcando a ${phoneNum}` },
+      success: { title: 'Llamada en curso', description: `Se registrará al colgar · ${phoneNum}` },
       error: { title: 'No se pudo llamar', description: 'Configura el número Retell (from) en Ajustes' },
     })
+    try {
+      const { call_id } = await req
+      pollCallResult(call_id, r => sileo.action({
+        title: 'Llamada registrada',
+        description: r.summary?.slice(0, 120) || 'Resultado guardado en Llamadas',
+        button: { title: 'Ver cola', onClick: () => onGoToCalls?.() },
+      }))
+    } catch { /* el toast de error ya salió */ }
   }
 
   useEffect(() => {
@@ -376,11 +385,16 @@ function SettingsView() {
   const testPhoneCall = async () => {
     if (!num.trim()) { sileo.warning({ title: 'Escribe el número a marcar' }); return }
     const cl = await getClients({ limit: 1 })
-    sileo.promise(postPhoneCall(cl.clients[0]?.customer_id || '', (lada + num).replace(/\s/g, '')), {
+    const req = postPhoneCall(cl.clients[0]?.customer_id || '', (lada + num).replace(/\s/g, ''))
+    sileo.promise(req, {
       loading: { title: 'Conectando llamada…', description: `Marcando a ${lada} ${num}` },
-      success: { title: 'Llamada en curso', description: `Sofía marca a ${lada} ${num}` },
+      success: { title: 'Llamada en curso', description: `Se registrará al colgar · ${lada} ${num}` },
       error: { title: 'No se pudo llamar', description: 'Falta el número Retell (from) o el billing está pendiente' },
     })
+    try {
+      const { call_id } = await req
+      pollCallResult(call_id, r => sileo.success({ title: 'Llamada registrada en historial', description: r.summary?.slice(0, 120) || 'Resultado guardado' }))
+    } catch { /* ya notificado por el promise */ }
   }
 
   return (

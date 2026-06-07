@@ -85,11 +85,23 @@ export const postRetentionLog = (customer_id: string) =>
 export const getCallResult = (callId: string) =>
   j<{ ready: boolean; summary: string; sentiment: string; status: string; duration_s: number; transcript: string }>(`/retention/result/${callId}`)
 
+// Sigue una llamada telefónica hasta que cuelga; el backend persiste el resultado al estar lista (upsert por call_id).
+export async function pollCallResult(callId: string, onDone?: (r: { summary: string; status: string; duration_s: number }) => void) {
+  for (let i = 0; i < 18; i++) {
+    await new Promise(r => setTimeout(r, 8000))
+    try {
+      const res = await getCallResult(callId)
+      if (res.ready && (res.summary || res.status === 'ended')) { onDone?.(res); return }
+    } catch { /* reintenta */ }
+  }
+}
+
 export type CallLog = {
   customer_id: string; tienda?: string; dueno?: string
   guion: string; resultado: string; duracion_seg: number; created_at: string
 }
 export const getCalls = () => j<{ calls: CallLog[] }>('/retention/calls')
+// (pollCallResult definido arriba, junto a getCallResult)
 
 export type SettingsState = Record<string, { set: boolean; masked: string }>
 export const getSettings = () => j<SettingsState>('/settings')

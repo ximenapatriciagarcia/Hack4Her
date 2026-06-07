@@ -436,9 +436,13 @@ def retention_result(call_id: str):
     ready = bool(summary) or status == "ended"
     if ready and (summary or transcript):
         with db() as c, c.cursor() as cur:
-            cur.execute("""insert into call_logs (customer_id, guion, resultado, duracion_seg, transcripcion)
-                           values (%s,%s,%s,%s,%s)""",
-                        [cid, summary, sentiment or status, dur, transcript])
+            cur.execute("""insert into call_logs (call_id, customer_id, guion, resultado, duracion_seg, transcripcion)
+                           values (%s,%s,%s,%s,%s,%s)
+                           on conflict (call_id) do update set
+                             guion = excluded.guion, resultado = excluded.resultado,
+                             duracion_seg = excluded.duracion_seg, transcripcion = excluded.transcripcion,
+                             customer_id = coalesce(nullif(excluded.customer_id, ''), call_logs.customer_id)""",
+                        [call_id, cid, summary, sentiment or status, dur, transcript])
             c.commit()
     return {"ready": ready, "summary": summary, "sentiment": sentiment,
             "status": status, "duration_s": dur, "transcript": transcript[:2000]}
@@ -447,7 +451,7 @@ def retention_result(call_id: str):
 @app.get("/retention/calls")
 def retention_calls(limit: int = 20):
     with db() as c, c.cursor() as cur:
-        cur.execute("""select customer_id, guion, resultado, duracion_seg, created_at
+        cur.execute("""select customer_id, guion, resultado, duracion_seg, created_at, call_id
                        from call_logs order by created_at desc limit %s""", [limit])
         cols = [d[0] for d in cur.description]
         rows = [dict(zip(cols, r)) for r in cur.fetchall()]
@@ -499,6 +503,11 @@ def retention_phonecall(a: PhoneCallReq):
         raise HTTPException(502, "Retell no respondió")
     if "call_id" not in data:
         raise HTTPException(502, f"Retell: {data.get('message', 'no se pudo crear la llamada')}")
+    with db() as c, c.cursor() as cur:
+        cur.execute("""insert into call_logs (call_id, customer_id, resultado)
+                       values (%s, %s, %s) on conflict (call_id) do nothing""",
+                    [data["call_id"], a.customer_id, "Llamada en curso…"])
+        c.commit()
     return {"call_id": data["call_id"], "status": data.get("call_status")}
 
 
