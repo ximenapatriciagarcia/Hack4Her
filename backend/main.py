@@ -241,6 +241,54 @@ def post_settings(s: SettingsIn):
     return {"ok": True}
 
 
+def _http_code(args: list) -> str:
+    return subprocess.run(args, capture_output=True, text=True, timeout=15).stdout.strip()
+
+
+@app.get("/settings/test/{tech}")
+def settings_test(tech: str):
+    """Prueba real de conexión por tecnología — devuelve {ok, message}."""
+    try:
+        if tech == "supabase":
+            with db() as c, c.cursor() as cur:
+                cur.execute("select count(*) from churn_scores")
+                n = cur.fetchone()[0]
+            return {"ok": True, "message": f"Conectado · {n:,} clientes en churn_scores"}
+        if tech == "gemini":
+            k = gemini_key()
+            if not k:
+                return {"ok": False, "message": "Sin API key de Gemini"}
+            code = _http_code(["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
+                               f"https://generativelanguage.googleapis.com/v1beta/models?key={k}"])
+            return {"ok": code == "200", "message": "Key válida · modelos accesibles" if code == "200" else f"Key rechazada (HTTP {code})"}
+        if tech == "elevenlabs":
+            k = elevenlabs_key()
+            if not k:
+                return {"ok": False, "message": "Sin API key de ElevenLabs"}
+            code = _http_code(["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
+                               "https://api.elevenlabs.io/v1/user", "-H", f"xi-api-key: {k}"])
+            return {"ok": code == "200", "message": "Key válida · voz disponible" if code == "200" else f"Key rechazada (HTTP {code})"}
+        if tech == "retell":
+            k = get_setting("retell_api_key")
+            if not k:
+                return {"ok": False, "message": "Sin API key de Retell"}
+            out = subprocess.run(["curl", "-s", "https://api.retellai.com/list-agents",
+                                  "-H", f"Authorization: Bearer {k}"], capture_output=True, text=True, timeout=15).stdout
+            try:
+                agents = json.loads(out)
+            except Exception:
+                agents = None
+            if not isinstance(agents, list):
+                return {"ok": False, "message": "Key rechazada por Retell"}
+            aid = get_setting("retell_agent_id")
+            agente = "Sofía OK" if any(a.get("agent_id") == aid for a in agents) else "agente no configurado"
+            numero = "con número" if get_setting("retell_from_number") else "SIN número saliente"
+            return {"ok": True, "message": f"Key válida · {len(agents)} agentes · {agente} · {numero}"}
+        return {"ok": False, "message": "Tecnología desconocida"}
+    except Exception as e:
+        return {"ok": False, "message": str(e)[:120]}
+
+
 # ---------------- AGENTE IA (Gemini) ----------------
 def gemini_key() -> str:
     k = get_setting("gemini_api_key")

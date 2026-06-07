@@ -103,6 +103,8 @@ export type CallLog = {
 export const getCalls = () => j<{ calls: CallLog[] }>('/retention/calls')
 // (pollCallResult definido arriba, junto a getCallResult)
 
+export const testConnection = (tech: string) => j<{ ok: boolean; message: string }>(`/settings/test/${tech}`)
+
 export type SettingsState = Record<string, { set: boolean; masked: string }>
 export const getSettings = () => j<SettingsState>('/settings')
 export const postSettings = (s: Record<string, string>) =>

@@ -3,7 +3,7 @@ import { sileo } from 'sileo'
 import { RetellWebClient } from 'retell-client-js-sdk'
 import {
   getStats, getClients, getClient, getDrivers, getSegmentos, getTrend, postAction,
-  getSettings, postSettings, postAssistant, fetchTTS, postWebCall, postPhoneCall, getCallResult, pollCallResult, getCalls,
+  getSettings, postSettings, testConnection, postAssistant, fetchTTS, postWebCall, postPhoneCall, getCallResult, pollCallResult, getCalls,
   type Stats, type ClientRow, type ClientDetail, type Driver, type Segmentos, type SettingsState, type CallLog,
 } from './api'
 
@@ -339,14 +339,25 @@ const FIELDS = [
   { k: 'supabase_db_url', label: 'Supabase Connection String', hint: 'postgresql://postgres:…@db…supabase.co:5432/postgres' },
   { k: 'gemini_api_key', label: 'Gemini API Key', hint: 'Google AI Studio — motor del agente IA' },
   { k: 'elevenlabs_api_key', label: 'ElevenLabs API Key', hint: 'Voz del agente y de las llamadas' },
-  { k: 'retell_api_key', label: 'Retell API Key', hint: 'Llamadas automáticas de retención' },
-  { k: 'retell_from_number', label: 'Retell Número (from)', hint: 'Número saliente — US de Retell o Twilio para MX. Formato +52…' },
   { k: 'elevenlabs_voice_id', label: 'ElevenLabs Voice ID', hint: 'Voz de Sara (Jessica por defecto)' },
+  { k: 'retell_api_key', label: 'Retell API Key', hint: 'Llamadas automáticas de retención' },
+  { k: 'retell_from_number', label: 'Retell Número (from)', hint: 'Número saliente — formato +1… o +52…' },
+] as const
+
+const FIELD_MAP: Record<string, { k: string; label: string; hint: string }> =
+  Object.fromEntries(FIELDS.map(f => [f.k, f]))
+
+const GROUPS = [
+  { tech: 'supabase', title: 'Supabase', desc: 'Base de datos · scores de churn e historial de llamadas', keys: ['supabase_url', 'supabase_anon_key', 'supabase_service_key', 'supabase_db_url'] },
+  { tech: 'gemini', title: 'Gemini', desc: 'Motor del agente IA conversacional', keys: ['gemini_api_key'] },
+  { tech: 'elevenlabs', title: 'ElevenLabs', desc: 'Voz del agente (texto a voz)', keys: ['elevenlabs_api_key', 'elevenlabs_voice_id'] },
+  { tech: 'retell', title: 'Retell', desc: 'Llamadas telefónicas de retención con Sofía', keys: ['retell_api_key', 'retell_from_number'] },
 ] as const
 
 function SettingsView() {
   const [s, setS] = useState<SettingsState>({})
   const [form, setForm] = useState<Record<string, string>>({})
+  const [tests, setTests] = useState<Record<string, { ok?: boolean; msg?: string; loading?: boolean }>>({})
   const [calling, setCalling] = useState(false)
   const [lada, setLada] = useState('+52')
   const [num, setNum] = useState('')
@@ -363,6 +374,17 @@ function SettingsView() {
       })
       setForm({}); getSettings().then(setS)
     } catch { /* el toast de error ya lo muestra el promise */ }
+  }
+
+  const testTech = async (tech: string) => {
+    setTests(t => ({ ...t, [tech]: { loading: true } }))
+    try {
+      if (Object.keys(form).length) { await postSettings(form); setForm({}); getSettings().then(setS) }
+      const r = await testConnection(tech)
+      setTests(t => ({ ...t, [tech]: { ok: r.ok, msg: r.message } }))
+    } catch {
+      setTests(t => ({ ...t, [tech]: { ok: false, msg: 'Error de conexión con el backend' } }))
+    }
   }
 
   const testWebCall = async () => {
@@ -399,27 +421,50 @@ function SettingsView() {
 
   return (
     <main className="container">
-      <section className="section">
-        <div className="section-label">Ajustes · API Keys</div>
-        <div className="form">
-          {FIELDS.map(f => (
-            <div className="field" key={f.k}>
-              <label>{f.label}</label>
-              <span className="hint">{f.hint}</span>
-              <input
-                type="password"
-                placeholder={s[f.k]?.set ? `configurada · ${s[f.k].masked}` : 'pegar aquí…'}
-                value={form[f.k] ?? ''}
-                onChange={e => setForm(v => ({ ...v, [f.k]: e.target.value }))}
-              />
-              <span className={`status ${s[f.k]?.set ? 'on' : ''}`}>
-                {s[f.k]?.set ? '● configurada' : '○ sin configurar'}
-              </span>
+      <div className="section-label" style={{ marginBottom: 6 }}>Ajustes · Conexiones</div>
+      {GROUPS.map(g => {
+        const r = tests[g.tech]
+        return (
+          <section className="section" key={g.tech}>
+            <div className="tech-head">
+              <div>
+                <div className="chat-name" style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+                  <span className={`led ${g.keys.every(k => s[k]?.set) ? 'green' : 'red'}`} />{g.title}
+                </div>
+                <span className="hint">{g.desc}</span>
+              </div>
+              <button className="btn-test" onClick={() => testTech(g.tech)} disabled={r?.loading}>
+                {r?.loading ? 'Probando…' : 'Probar conexión'}
+              </button>
             </div>
-          ))}
-          <button className="btn-primary" onClick={save}>Guardar ajustes</button>
-        </div>
-      </section>
+            {r && !r.loading && r.msg && (
+              <div className={`test-result ${r.ok ? 'ok' : 'fail'}`}><span>{r.ok ? '✓' : '✗'}</span>{r.msg}</div>
+            )}
+            <div className="form">
+              {g.keys.map(k => {
+                const f = FIELD_MAP[k]
+                return (
+                  <div className="field" key={k}>
+                    <label>{f.label}</label>
+                    <span className="hint">{f.hint}</span>
+                    <input
+                      type="password"
+                      placeholder={s[k]?.set ? `configurada · ${s[k].masked}` : 'pegar aquí…'}
+                      value={form[k] ?? ''}
+                      onChange={e => setForm(v => ({ ...v, [k]: e.target.value }))}
+                    />
+                    <span className="status">
+                      <span className={`led ${s[k]?.set ? 'green' : 'red'}`} />
+                      {s[k]?.set ? 'configurada' : 'sin configurar'}
+                    </span>
+                  </div>
+                )
+              })}
+            </div>
+          </section>
+        )
+      })}
+      <button className="btn-primary" onClick={save} style={{ marginBottom: 28 }}>Guardar ajustes</button>
 
       <section className="section">
         <div className="section-label">Probar llamada</div>
