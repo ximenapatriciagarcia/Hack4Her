@@ -550,8 +550,10 @@ function CallsView() {
     const d = await getCalls().catch(() => null)
     if (!d) return
     setCalls(d.calls)
-    // Reconciliar las que siguen "en curso": preguntar a Retell su estado real
-    const pend = d.calls.filter(c => c.call_id && /en curso/i.test(c.resultado || ''))
+    // Reconciliar SOLO las "en curso" recientes (<15 min). Las viejas el backend ya
+    // las cierra como "Sin completar" → nunca se reconsultan en bucle.
+    const reciente = (iso: string) => Date.now() - Date.parse(iso.replace(' ', 'T')) < 15 * 60 * 1000
+    const pend = d.calls.filter(c => c.call_id && /en curso/i.test(c.resultado || '') && reciente(c.created_at))
     if (pend.length) {
       await Promise.all(pend.map(c => getCallResult(c.call_id as string).catch(() => {})))
       const d2 = await getCalls().catch(() => null)
@@ -561,7 +563,7 @@ function CallsView() {
 
   useEffect(() => {
     tick()
-    const id = setInterval(tick, 6000)   // auto-refresca el historial
+    const id = setInterval(tick, 8000)   // auto-refresco ligado a esta vista; se DETIENE al salir de Llamadas
     return () => clearInterval(id)
   }, [tick])
 

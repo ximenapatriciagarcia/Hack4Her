@@ -610,6 +610,12 @@ def retention_result(call_id: str):
 @app.get("/retention/calls")
 def retention_calls(limit: int = 20):
     with db() as c, c.cursor() as cur:
+        # Auto-cierre: una llamada que lleva >30 min "en curso" ya no se va a resolver
+        # (no contestó / se cerró la pestaña). Se marca para que NO se reconsulte en bucle.
+        cur.execute("update call_logs set resultado='Sin completar' "
+                    "where resultado ilike %s and created_at < now() - interval '30 minutes'",
+                    ['llamada en curso%'])
+        c.commit()
         cur.execute("""select customer_id, guion, resultado, duracion_seg, created_at, call_id
                        from call_logs order by created_at desc limit %s""", [limit])
         cols = [d[0] for d in cur.description]
