@@ -272,8 +272,10 @@ def build_context() -> str:
     L = [f"Total de clientes activos: {total}. En riesgo ALTO: {alto}.",
          "Churn promedio por tamaño de tienda: " + "; ".join(f"{s[0]} {s[1]}% (n={s[2]})" for s in seg),
          "Drivers de churn (mayor a menor): " + ", ".join(drv),
-         "Top 15 clientes en mayor riesgo (id · prob · territorio · canal · tamaño):"]
-    L += [f"- {t[0][:10]}… {t[1]}% · {t[2]} · {t[3]} · {t[4]}" for t in top]
+         "Top 15 clientes en mayor riesgo (negocio · dueño · prob · territorio · canal · tamaño):"]
+    for t in top:
+        tienda, dueno, _ = humanize(t[0])
+        L.append(f"- {tienda} ({dueno}) · {t[1]}% · {t[2]} · {t[3]} · {t[4]}")
     return "\n".join(L)
 
 
@@ -297,7 +299,7 @@ def assistant(a: Ask):
     body = {
         "systemInstruction": {"parts": [{"text": system}]},
         "contents": [{"role": "user", "parts": [{"text": a.message}]}],
-        "generationConfig": {"temperature": 0.4, "maxOutputTokens": 700},
+        "generationConfig": {"temperature": 0.4, "maxOutputTokens": 2048, "thinkingConfig": {"thinkingBudget": 0}},
     }
     pf = "/tmp/_gemini_body.json"
     with open(pf, "w", encoding="utf-8") as f:
@@ -311,8 +313,9 @@ def assistant(a: Ask):
         data = json.loads(r.stdout)
         if "error" in data:
             return {"reply": f"Gemini devolvió un error: {data['error'].get('message', 'desconocido')[:160]}"}
-        text = data["candidates"][0]["content"]["parts"][0]["text"]
-        return {"reply": text.strip()}
+        parts = data["candidates"][0]["content"].get("parts", [])
+        text = "".join(p.get("text", "") for p in parts).strip()
+        return {"reply": text or "No pude generar una respuesta completa. Intenta reformular la pregunta."}
     except Exception:
         return {"reply": "No pude generar la respuesta (revisa la API key de Gemini en Ajustes)."}
 

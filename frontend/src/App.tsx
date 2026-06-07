@@ -63,7 +63,7 @@ function LineChart({ data }: { data: { mes: number; rate: number }[] }) {
   )
 }
 
-function DashboardView() {
+function DashboardView({ onGoToCalls }: { onGoToCalls?: () => void }) {
   const [stats, setStats] = useState<Stats | null>(null)
   const [rows, setRows] = useState<ClientRow[]>([])
   const [riesgo, setRiesgo] = useState<string | null>('alto')
@@ -107,13 +107,12 @@ function DashboardView() {
 
   const [phoneNum, setPhoneNum] = useState('')
   const callPhone = async (id: string) => {
-    if (!phoneNum.trim()) { sileo.error({ title: 'Escribe un número a marcar' }); return }
-    try {
-      await postPhoneCall(id, phoneNum.trim())
-      sileo.success({ title: 'Llamando…', description: `El agente marca a ${phoneNum}` })
-    } catch {
-      sileo.error({ title: 'No se pudo llamar', description: 'Configura el número Retell (from) en Ajustes' })
-    }
+    if (!phoneNum.trim()) { sileo.warning({ title: 'Escribe un número a marcar' }); return }
+    sileo.promise(postPhoneCall(id, phoneNum.trim()), {
+      loading: { title: 'Conectando llamada…', description: `Marcando a ${phoneNum}` },
+      success: { title: 'Llamada en curso', description: `Sofía está marcando a ${phoneNum}` },
+      error: { title: 'No se pudo llamar', description: 'Configura el número Retell (from) en Ajustes' },
+    })
   }
 
   useEffect(() => {
@@ -150,7 +149,11 @@ function DashboardView() {
   const registrarAccion = async (id: string) => {
     try {
       await postAction({ customer_id: id, accion: 'Contacto de retención', notas: 'Generado desde el radar' })
-      sileo.success({ title: 'Acción registrada', description: 'Cliente añadido a la cola de retención' })
+      sileo.action({
+        title: 'Acción registrada',
+        description: 'Cliente añadido a la cola de retención',
+        button: { title: 'Ver cola', onClick: () => onGoToCalls?.() },
+      })
       getStats().then(setStats)
     } catch {
       sileo.error({ title: 'No se pudo registrar', description: 'Revisa la conexión con el backend' })
@@ -344,12 +347,13 @@ function SettingsView() {
 
   const save = async () => {
     try {
-      await postSettings(form)
-      sileo.success({ title: 'Ajustes guardados', description: 'Las API keys quedaron configuradas' })
+      await sileo.promise(postSettings(form), {
+        loading: { title: 'Guardando ajustes…' },
+        success: { title: 'Ajustes guardados', description: 'Las API keys quedaron configuradas' },
+        error: { title: 'No se pudo guardar', description: 'Revisa la conexión con el backend' },
+      })
       setForm({}); getSettings().then(setS)
-    } catch {
-      sileo.error({ title: 'No se pudo guardar', description: 'Revisa la conexión con el backend' })
-    }
+    } catch { /* el toast de error ya lo muestra el promise */ }
   }
 
   const testWebCall = async () => {
@@ -370,14 +374,13 @@ function SettingsView() {
   }
   const stopWebCall = () => { webRef.current?.stopCall(); setCalling(false) }
   const testPhoneCall = async () => {
-    if (!num.trim()) { sileo.error({ title: 'Escribe el número a marcar' }); return }
-    try {
-      const cl = await getClients({ limit: 1 })
-      await postPhoneCall(cl.clients[0]?.customer_id || '', (lada + num).replace(/\s/g, ''))
-      sileo.success({ title: 'Llamando…', description: `El agente marca a ${lada} ${num}` })
-    } catch {
-      sileo.error({ title: 'No se pudo llamar', description: 'Falta el número Retell (from) o el billing está pendiente' })
-    }
+    if (!num.trim()) { sileo.warning({ title: 'Escribe el número a marcar' }); return }
+    const cl = await getClients({ limit: 1 })
+    sileo.promise(postPhoneCall(cl.clients[0]?.customer_id || '', (lada + num).replace(/\s/g, '')), {
+      loading: { title: 'Conectando llamada…', description: `Marcando a ${lada} ${num}` },
+      success: { title: 'Llamada en curso', description: `Sofía marca a ${lada} ${num}` },
+      error: { title: 'No se pudo llamar', description: 'Falta el número Retell (from) o el billing está pendiente' },
+    })
   }
 
   return (
@@ -466,6 +469,12 @@ const SUGERENCIAS = [
   '¿Qué acción tomo esta semana?',
 ]
 
+const Glyph = () => (
+  <svg className="glyph" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+    <path d="M12 2.2l1.9 6.4a3 3 0 0 0 1.5 1.5l6.4 1.9-6.4 1.9a3 3 0 0 0-1.5 1.5L12 21.8l-1.9-6.4a3 3 0 0 0-1.5-1.5L2.2 12l6.4-1.9a3 3 0 0 0 1.5-1.5z" />
+  </svg>
+)
+
 function AgentView() {
   const [log, setLog] = useState<{ role: 'user' | 'bot'; text: string }[]>([])
   const [input, setInput] = useState('')
@@ -507,33 +516,51 @@ function AgentView() {
       <section className="section" style={{ marginBottom: 0 }}>
         <div className="section-label">Agente · Centinela</div>
         <div className="chat">
+          <div className="chat-head">
+            <div className="avatar"><Glyph /></div>
+            <div>
+              <div className="chat-name">Centinela</div>
+              <div className="chat-status"><span className="dot-live" />Analista de retención · en línea</div>
+            </div>
+          </div>
           <div className="chat-log">
             {log.length === 0 && (
               <div className="chat-empty">
-                <p className="mono" style={{ color: 'var(--fg-faint)', fontSize: 13 }}>
-                  Pregúntame sobre el churn de tus clientes.
-                </p>
+                <div className="avatar lg"><Glyph /></div>
+                <div className="empty-title">Hola, soy Centinela</div>
+                <p className="empty-sub">Tu analista de retención. Pregúntame sobre el churn de tus tienditas y qué hacer para retenerlas.</p>
                 <div className="suggest">
-                  {SUGERENCIAS.map(s => <button key={s} className="chip" onClick={() => send(s)}>{s}</button>)}
+                  {SUGERENCIAS.map(s => <button key={s} className="suggest-card" onClick={() => send(s)}>{s}</button>)}
                 </div>
               </div>
             )}
             {log.map((m, i) => (
-              <div key={i} className={`msg ${m.role}`}>
-                {m.role === 'bot' && (
-                  <div className="who">
-                    Centinela
-                    <button className={`speak ${speaking === i ? 'on' : ''}`} onClick={() => speak(i, m.text)}>
-                      {speaking === i ? '◼ sonando' : '▶ voz'}
-                    </button>
-                  </div>
-                )}
-                {m.text}
+              <div key={i} className={`row ${m.role} enter`}>
+                {m.role === 'bot' && <div className="avatar sm"><Glyph /></div>}
+                <div className="bubble-wrap">
+                  {m.role === 'bot' && (
+                    <div className="who">
+                      Centinela
+                      <button className={`speak ${speaking === i ? 'on' : ''}`} onClick={() => speak(i, m.text)}>
+                        {speaking === i ? (
+                          <><svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2" /></svg>sonando</>
+                        ) : (
+                          <><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 5 6 9H2v6h4l5 4z" /><path d="M15.5 8.5a5 5 0 0 1 0 7" /></svg>voz</>
+                        )}
+                      </button>
+                    </div>
+                  )}
+                  <div className={`msg ${m.role}`}>{m.text}</div>
+                </div>
               </div>
             ))}
             {busy && (
-              <div className="msg bot"><div className="who">Centinela</div>
-                <span className="mono" style={{ color: 'var(--fg-faint)' }}>pensando…</span></div>
+              <div className="row bot enter">
+                <div className="avatar sm"><Glyph /></div>
+                <div className="bubble-wrap">
+                  <div className="msg bot typing"><span /><span /><span /></div>
+                </div>
+              </div>
             )}
             <div ref={endRef} />
           </div>
@@ -544,7 +571,9 @@ function AgentView() {
               onKeyDown={e => { if (e.key === 'Enter') send() }}
               placeholder="Escribe tu pregunta…"
             />
-            <button className="chat-send" onClick={() => send()} disabled={busy}>Enviar</button>
+            <button className="chat-send" onClick={() => send()} disabled={busy} aria-label="Enviar">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m22 2-7 20-4-9-9-4z" /><path d="M22 2 11 13" /></svg>
+            </button>
           </div>
         </div>
       </section>
@@ -602,7 +631,7 @@ export default function App() {
       </aside>
 
       <div className="content">
-        {view === 'dashboard' ? <DashboardView /> : view === 'agent' ? <AgentView /> : view === 'calls' ? <CallsView /> : <SettingsView />}
+        {view === 'dashboard' ? <DashboardView onGoToCalls={() => setView('calls')} /> : view === 'agent' ? <AgentView /> : view === 'calls' ? <CallsView /> : <SettingsView />}
       </div>
     </div>
   )
