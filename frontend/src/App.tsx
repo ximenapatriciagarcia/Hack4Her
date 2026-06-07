@@ -544,27 +544,55 @@ function SettingsView() {
 
 function CallsView() {
   const [calls, setCalls] = useState<CallLog[]>([])
-  useEffect(() => { getCalls().then(d => setCalls(d.calls)).catch(() => {}) }, [])
+  const [refreshing, setRefreshing] = useState(false)
+
+  const tick = useCallback(async () => {
+    const d = await getCalls().catch(() => null)
+    if (!d) return
+    setCalls(d.calls)
+    // Reconciliar las que siguen "en curso": preguntar a Retell su estado real
+    const pend = d.calls.filter(c => c.call_id && /en curso/i.test(c.resultado || ''))
+    if (pend.length) {
+      await Promise.all(pend.map(c => getCallResult(c.call_id as string).catch(() => {})))
+      const d2 = await getCalls().catch(() => null)
+      if (d2) setCalls(d2.calls)
+    }
+  }, [])
+
+  useEffect(() => {
+    tick()
+    const id = setInterval(tick, 6000)   // auto-refresca el historial
+    return () => clearInterval(id)
+  }, [tick])
+
+  const manual = async () => { setRefreshing(true); await tick(); setRefreshing(false) }
+
   return (
     <main className="container">
       <section className="section">
-        <div className="section-label">Historial de llamadas de retención</div>
+        <div className="calls-head">
+          <div className="section-label" style={{ marginBottom: 0 }}>Historial de llamadas de retención</div>
+          <button className="btn-test" onClick={manual} disabled={refreshing}>{refreshing ? 'Actualizando…' : '↻ Actualizar'}</button>
+        </div>
         {calls.length === 0 ? (
           <p className="mono" style={{ color: 'var(--fg-faint)', fontSize: 13, lineHeight: 1.7 }}>
             Aún no hay llamadas registradas.<br />Haz una desde la ficha de un cliente (Radar) y aquí verás el resumen y el sentimiento de la conversación.
           </p>
         ) : (
           <div className="calls">
-            {calls.map((c, i) => (
-              <div className="call-row" key={i}>
-                <div>
-                  <div className="tienda-name">{c.tienda || c.customer_id.slice(0, 10)}</div>
-                  <div className="call-when">{c.dueno} · {c.created_at.slice(0, 16)}</div>
+            {calls.map((c, i) => {
+              const enCurso = /en curso/i.test(c.resultado || '')
+              return (
+                <div className="call-row" key={c.call_id || i}>
+                  <div>
+                    <div className="tienda-name">{c.tienda || c.customer_id.slice(0, 10)}</div>
+                    <div className="call-when">{c.dueno} · {c.created_at.slice(0, 16)}{c.duracion_seg ? ` · ${c.duracion_seg}s` : ''}</div>
+                  </div>
+                  <div className="call-summary">{c.guion || '—'}</div>
+                  <div className={`sent ${enCurso ? 'pending' : c.resultado}`}>{enCurso ? '⏳ en curso' : c.resultado}</div>
                 </div>
-                <div className="call-summary">{c.guion || '—'}</div>
-                <div className={`sent ${c.resultado}`}>{c.resultado}</div>
-              </div>
-            ))}
+              )
+            })}
           </div>
         )}
       </section>

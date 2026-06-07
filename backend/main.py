@@ -579,10 +579,21 @@ def retention_result(call_id: str):
     sentiment = an.get("user_sentiment", "")
     transcript = data.get("transcript", "")
     status = data.get("call_status", "")
+    disc = data.get("disconnection_reason", "") or ""
     dur = int((data.get("duration_ms") or 0) / 1000)
     cid = (data.get("metadata") or {}).get("customer_id", "")
-    ready = bool(summary) or status == "ended"
-    if ready and (summary or transcript):
+    terminal = status in ("ended", "error")        # estados FINALES de Retell
+    ready = terminal or bool(summary)
+    if ready:
+        if summary or transcript:
+            resultado = sentiment or "Completada"
+        else:
+            resultado = {
+                "dial_no_answer": "No contestó", "dial_busy": "Ocupado",
+                "dial_failed": "No se pudo marcar", "voicemail_reached": "Buzón de voz",
+                "user_not_joined": "No se conectó", "error_user_not_joined": "No se conectó",
+                "no_valid_payment": "Pago Retell pendiente",
+            }.get(disc, "Sin conversación" if status == "ended" else "Error de llamada")
         with db() as c, c.cursor() as cur:
             cur.execute("""insert into call_logs (call_id, customer_id, guion, resultado, duracion_seg, transcripcion)
                            values (%s,%s,%s,%s,%s,%s)
@@ -590,7 +601,7 @@ def retention_result(call_id: str):
                              guion = excluded.guion, resultado = excluded.resultado,
                              duracion_seg = excluded.duracion_seg, transcripcion = excluded.transcripcion,
                              customer_id = coalesce(nullif(excluded.customer_id, ''), call_logs.customer_id)""",
-                        [call_id, cid, summary, sentiment or status, dur, transcript])
+                        [call_id, cid, summary, resultado, dur, transcript])
             c.commit()
     return {"ready": ready, "summary": summary, "sentiment": sentiment,
             "status": status, "duration_s": dur, "transcript": transcript[:2000]}

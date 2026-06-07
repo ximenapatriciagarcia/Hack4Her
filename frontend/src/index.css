@@ -279,6 +279,8 @@ button { font-family: inherit; cursor: pointer; border: none; background: none; 
 .glyph-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 7px var(--accent); flex-shrink: 0; }
 .diag-text { font-size: 13.5px; line-height: 1.62; color: var(--fg); white-space: pre-wrap; }
 .diag-empty { font-size: 12.5px; line-height: 1.55; color: var(--fg-faint); }
+.calls-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 18px; }
+.sent.pending { color: var(--fg-muted) !important; border-color: var(--border-strong); background: var(--bg-elev); }
 
 /* ============ SETTINGS FORM ============ */
 .form { max-width: 580px; display: flex; flex-direction: column; gap: 28px; }

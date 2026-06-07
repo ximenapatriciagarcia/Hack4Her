@@ -98,7 +98,7 @@ export async function pollCallResult(callId: string, onDone?: (r: { summary: str
 
 export type CallLog = {
   customer_id: string; tienda?: string; dueno?: string
-  guion: string; resultado: string; duracion_seg: number; created_at: string
+  guion: string; resultado: string; duracion_seg: number; created_at: string; call_id?: string
 }
 export const getCalls = () => j<{ calls: CallLog[] }>('/retention/calls')
 // (pollCallResult definido arriba, junto a getCallResult)
